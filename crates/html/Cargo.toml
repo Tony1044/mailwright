@@ -1,0 +1,14 @@
+[package]
+name = "mailcraft-html"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "HTML mail to a simple block model MailCraft can draw (and to plain text), with remote content kept out unless asked for"
+
+[lints]
+workspace = true
+
+[dependencies]
+scraper = { workspace = true }
+ego-tree = "0.10"
+base64 = { workspace = true }

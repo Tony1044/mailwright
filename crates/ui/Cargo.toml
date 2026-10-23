@@ -1,0 +1,35 @@
+[package]
+name = "mailcraft-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MailCraft's interface: a classic desktop mail and calendar client in egui"
+
+[lints]
+workspace = true
+
+[dependencies]
+mailcraft-graph = { workspace = true }
+mailcraft-store = { workspace = true }
+mailcraft-sync = { workspace = true }
+mailcraft-html = { workspace = true }
+mockgraph = { workspace = true }
+egui = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+base64 = { workspace = true }
+log = { workspace = true }
+image = { workspace = true }
+rfd = { workspace = true }
+open = { workspace = true }
+dirs = { workspace = true }
+mime_guess = { workspace = true }
+ureq = { workspace = true }
+
+[dev-dependencies]
+egui_kittest = { workspace = true }
+
+# Load libwayland at run time (as eframe does), so building needs no Wayland development files.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+wayland-sys = { version = "0.31", features = ["dlopen"] }

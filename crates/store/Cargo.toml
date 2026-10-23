@@ -1,0 +1,18 @@
+[package]
+name = "mailcraft-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MailCraft's offline cache: folders, messages (with full-text search), attachments, calendars and events in SQLite, plus the queue of changes waiting to reach the server"
+
+[lints]
+workspace = true
+
+[dependencies]
+mailcraft-graph = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }

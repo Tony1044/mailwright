@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Name=MailCraft
+GenericName=Mail and Calendar
+Comment=Mail and calendar for Microsoft 365 (Exchange Online)
+Exec=mailcraft %u
+TryExec=mailcraft
+Icon=ai.storyteller.mailcraft
+Terminal=false
+StartupNotify=true
+StartupWMClass=ai.storyteller.mailcraft
+Categories=Office;Network;Email;Calendar;
+Keywords=mail;email;calendar;exchange;microsoft 365;outlook;graph;
+MimeType=x-scheme-handler/mailto;
+Actions=SampleMailbox;
+
+[Desktop Action SampleMailbox]
+Name=Open the Sample Mailbox
+Exec=mailcraft --sample-mailbox
