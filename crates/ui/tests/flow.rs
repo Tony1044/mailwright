@@ -71,3 +71,57 @@ fn send_first_compose(app: &mut MailApp) {
 fn save_first_editor(app: &mut MailApp, _ctx: &egui::Context) {
     app.test_save_event(0);
 }
+
+#[test]
+fn two_accounts_side_by_side() {
+    use mailcraft_graph::tokens::{MemoryTokenStore, TokenStore};
+    let data = std::env::temp_dir().join(format!("mailcraft-ui-two-{}", std::process::id()));
+    let mut app = MailApp::new(Settings::default(), None, Some(data.clone()));
+    let ctx = egui::Context::default();
+    pump(&mut app, &ctx, 100, |_| false);
+    app.start_demo();
+    assert!(pump(&mut app, &ctx, 15_000, |a| !a.mail.list.is_empty()));
+
+    // A second mailbox on its own server.
+    let other = mockgraph::MockGraph::start_as("Jo Bloggs", "jo@m365.example").unwrap();
+    let acc = mailcraft_graph::AccountConfig {
+        client_id: "1b2c3d4e-0000-1111-2222-333344445555".into(),
+        tenant: "m365.example".into(),
+        username: "jo@m365.example".into(),
+        login_base: Some(other.login_base()),
+        graph_base: Some(other.graph_base()),
+        ..Default::default()
+    };
+    let store: std::sync::Arc<dyn TokenStore> = std::sync::Arc::new(MemoryTokenStore::default());
+    store.save("jo@m365.example", &other.grant_refresh_token()).unwrap();
+    let client = mailcraft_graph::GraphClient::from_saved(acc.clone(), store).unwrap();
+    let i = app.start_session(acc, false, Some(Box::new(client))).unwrap();
+    assert_eq!(i, 1);
+    assert!(pump(&mut app, &ctx, 15_000, |a| a.sessions.len() == 2 && a.sessions.iter().all(|s| !s.folders.is_empty())), "both trees load");
+    assert_eq!(app.active, 0, "adding doesn't switch away");
+
+    // Opening the second account's Inbox switches to it.
+    let jo_inbox = app.sessions[1].folders.iter().find(|f| f.well_known.as_deref() == Some("inbox")).unwrap().id.clone();
+    app.select_folder_in(1, &jo_inbox);
+    assert_eq!(app.active, 1);
+    assert!(pump(&mut app, &ctx, 10_000, |a| !a.mail.list.is_empty()));
+
+    // New mail from the second account goes through its server.
+    app.new_mail();
+    assert_eq!(app.composes[0].account, "jo@m365.example");
+    app.composes[0].to = "ada@harbourview.example".into();
+    app.composes[0].subject = "From Jo".into();
+    app.test_send_compose(0);
+    assert!(pump(&mut app, &ctx, 10_000, |_| other.state().sent.iter().any(|m| m["subject"] == "From Jo")));
+    assert!(app.demo.as_ref().unwrap().state().sent.is_empty());
+
+    // The calendar shows both accounts.
+    app.set_view(mailcraft_ui::View::Calendar);
+    assert!(pump(&mut app, &ctx, 10_000, |a| a.cal.calendars.len() == 2));
+
+    // Removing one leaves the other.
+    app.remove_account("jo@m365.example");
+    assert_eq!(app.sessions.len(), 1);
+    drop(app);
+    let _ = std::fs::remove_dir_all(data);
+}

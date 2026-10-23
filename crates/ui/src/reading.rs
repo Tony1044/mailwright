@@ -261,7 +261,7 @@ fn message_view(app: &mut MailApp, ui: &mut Ui, r: &Reading, in_pane: bool) -> V
                         ui.add(egui::Label::new(egui::RichText::new(&m.preview).size(render::BODY_PX)).wrap());
                         ui.add_space(12.0);
                     }
-                    let online = app.session.as_ref().is_some_and(|s| s.connected);
+                    let online = app.session().is_some_and(|s| s.connected);
                     ui.horizontal(|ui| {
                         if online {
                             ui.spinner();
@@ -385,9 +385,9 @@ pub fn reader_windows(app: &mut MailApp, ctx: &egui::Context) {
     let readers = std::mem::take(&mut app.readers);
     let mut keep = Vec::new();
     for (wid, mid) in readers {
-        let Some(row) = app.session.as_ref().and_then(|s| s.store.message(&mid).ok().flatten()) else { continue };
+        let Some(row) = app.session().and_then(|s| s.store.message(&mid).ok().flatten()) else { continue };
         let title = if row.subject.is_empty() { "(no subject)".to_string() } else { row.subject.clone() };
-        let attachments = app.session.as_ref().map(|s| s.store.attachments(&mid).unwrap_or_default()).unwrap_or_default();
+        let attachments = app.session().map(|s| s.store.attachments(&mid).unwrap_or_default()).unwrap_or_default();
         let doc = row.body.as_deref().map(mailcraft_html::parse);
         let reading = Reading { row, doc, attachments, event: None, allow_remote: app.settings.remote_images, requested: true, opened_at: std::time::Instant::now() };
         let mut open = true;

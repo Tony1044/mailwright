@@ -15,7 +15,7 @@ pub fn title_bar(app: &mut MailApp, ui: &mut Ui) {
         let (r, _) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
         crate::app_icon::paint(ui.painter(), r);
         ui.add_space(4.0);
-        if widgets::icon_button(ui, "send_receive", "Send/Receive All Folders (F9)", app.session.is_some()).clicked() {
+        if widgets::icon_button(ui, "send_receive", "Send/Receive All Folders (F9)", !app.sessions.is_empty()).clicked() {
             app.sync_all();
         }
         let offline = app.settings.work_offline;
@@ -30,8 +30,8 @@ pub fn title_bar(app: &mut MailApp, ui: &mut Ui) {
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(sr).layout(egui::Layout::left_to_right(egui::Align::Center)));
     search_box(app, &mut child, w);
     // The account, on the right.
-    let name = app.session.as_ref().map(|s| if s.name.is_empty() { s.address.clone() } else { s.name.clone() }).unwrap_or_default();
-    let key = app.session.as_ref().map(|s| s.address.clone()).unwrap_or_default();
+    let name = app.session().map(|s| if s.name.is_empty() { s.address.clone() } else { s.name.clone() }).unwrap_or_default();
+    let key = app.session().map(|s| s.address.clone()).unwrap_or_default();
     let ar = Rect::from_center_size(pos2(full.max.x - 22.0, full.center().y), vec2(26.0, 26.0));
     let resp = ui.interact(ar, ui.id().with("account"), Sense::click());
     widgets::avatar(ui, ar.center(), 13.0, &name, &key);
@@ -98,7 +98,7 @@ pub fn status_bar(app: &mut MailApp, ui: &mut Ui) {
         View::Calendar => app.cal.range_title(&app.settings),
     };
     ui.painter().text(pos2(r.min.x + 10.0, r.center().y), Align2::LEFT_CENTER, left, regular(11.5), t.text_dim);
-    let (connected, queued, demo) = app.session.as_ref().map(|s| (s.connected, s.queued, s.demo)).unwrap_or_default();
+    let (connected, queued, demo) = app.session().map(|s| (s.connected, s.queued, s.demo)).unwrap_or_default();
     let right = if app.settings.work_offline {
         "Working Offline".to_string()
     } else if demo && connected {
@@ -126,20 +126,18 @@ pub fn status_bar(app: &mut MailApp, ui: &mut Ui) {
 
 /// Sign-in prompts and errors, under the ribbon.
 pub fn banners(app: &mut MailApp, ui: &mut Ui) {
-    let needs = app.session.as_ref().and_then(|s| s.needs_sign_in.clone());
-    if needs.is_none() && app.errors.is_empty() {
+    let needs: Vec<(usize, String, String)> = app.sessions.iter().enumerate().filter_map(|(i, s)| s.needs_sign_in.clone().map(|m| (i, s.label().to_string(), m))).collect();
+    if needs.is_empty() && app.errors.is_empty() {
         return;
     }
     let t = Tokens::get(ui.ctx());
     egui::Panel::top("banners").frame(egui::Frame::new().fill(t.ribbon).inner_margin(egui::Margin::symmetric(8, 4))).show(ui, |ui| {
-        if let Some(m) = needs {
-            if let Some(resp) = widgets::info_bar(ui, "lock", &format!("{m} You're seeing what's saved on this computer."), false, Some("Sign in again")) {
+        let busy = app.signin.busy;
+        for (i, who, m) in needs {
+            let text = format!("{who}: {m} You're seeing what's saved on this computer.");
+            if let Some(resp) = widgets::info_bar(ui, "lock", &text, false, if busy { None } else { Some("Sign in again") }) {
                 if resp.clicked() {
-                    if let Some(s) = &app.session {
-                        app.signin.client_id = s.account.client_id.clone();
-                        app.signin.tenant = s.account.tenant.clone();
-                    }
-                    app.begin_sign_in(false);
+                    app.reauthenticate(i);
                 }
             }
         }

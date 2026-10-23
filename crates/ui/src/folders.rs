@@ -24,23 +24,47 @@ pub fn pane(app: &mut MailApp, ui: &mut Ui) {
                 let open = section(ui, "Favorites", "fav_section", true);
                 if open {
                     for f in favorites {
-                        folder_row(app, ui, &f, 0, false, true);
+                        let acct = app.session_for_folder(&f.id).unwrap_or(0);
+                        folder_row(app, ui, acct, &f, 0, false, true);
                     }
                 }
                 ui.add_space(8.0);
             }
-            let title = app.session.as_ref().map(|s| if s.address.is_empty() { s.name.clone() } else { s.address.clone() }).unwrap_or_default();
-            if section(ui, &title, "account_section", true) {
-                let folders = app.mail.folders.clone();
-                let roots: Vec<FolderRow> = folders.iter().filter(|f| f.parent_id.is_none() && !f.hidden).cloned().collect();
-                for f in roots {
-                    tree(app, ui, &folders, &f, 0);
+            let accounts: Vec<(String, Vec<FolderRow>, bool)> = app.sessions.iter().map(|s| (s.label().to_string(), s.folders.clone(), s.needs_sign_in.is_some())).collect();
+            for (k, (title, folders, locked)) in accounts.into_iter().enumerate() {
+                let open = section(ui, &title, &format!("account_section:{title}"), true);
+                if locked {
+                    ui.horizontal(|ui| {
+                        ui.add_space(20.0);
+                        if ui.link(egui::RichText::new("Sign in again").font(crate::theme::regular(11.5))).clicked() {
+                            app.reauthenticate(k);
+                        }
+                    });
                 }
-                if folders.is_empty() {
-                    ui.add_space(8.0);
-                    ui.label(egui::RichText::new("Loading folders\u{2026}").color(Tokens::get(ui.ctx()).text_dim));
+                if open {
+                    let roots: Vec<FolderRow> = folders.iter().filter(|f| f.parent_id.is_none() && !f.hidden).cloned().collect();
+                    for f in roots {
+                        tree(app, ui, k, &folders, &f, 0);
+                    }
+                    if folders.is_empty() {
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(20.0);
+                            ui.label(egui::RichText::new("Loading folders\u{2026}").color(Tokens::get(ui.ctx()).text_dim));
+                        });
+                    }
                 }
+                ui.add_space(8.0);
             }
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                icons::paint(ui.painter(), r, "plus", Tokens::get(ui.ctx()).text_dim, Tokens::get(ui.ctx()).accent);
+                if ui.link("Add Account").clicked() {
+                    app.add_account();
+                }
+            });
         });
     });
 }
@@ -58,19 +82,27 @@ pub fn minimized(app: &mut MailApp, ui: &mut Ui) {
     });
 }
 
+/// The first account's main folders, unless the user chose their own.
+fn default_favorites(app: &MailApp) -> Vec<String> {
+    let Some(first) = app.sessions.first() else { return Vec::new() };
+    ["inbox", "sentitems", "drafts", "deleteditems"].iter().filter_map(|wk| first.folders.iter().find(|f| f.well_known.as_deref() == Some(*wk)).map(|f| f.id.clone())).collect()
+}
+
 fn favorite_folders(app: &MailApp) -> Vec<FolderRow> {
-    let ids: Vec<String> = if app.settings.favorites.is_empty() {
-        ["inbox", "sentitems", "drafts", "deleteditems"].iter().filter_map(|wk| app.folder_wk(wk)).collect()
-    } else {
-        app.settings.favorites.clone()
-    };
-    ids.iter().filter_map(|id| app.mail.folders.iter().find(|f| &f.id == id).cloned()).collect()
+    let ids: Vec<String> = if app.settings.favorites.is_empty() { default_favorites(app) } else { app.settings.favorites.clone() };
+    ids.iter().filter_map(|id| app.sessions.iter().find_map(|s| s.folders.iter().find(|f| &f.id == id).cloned())).collect()
 }
 
 impl MailApp {
+    /// Show the add-account page.
+    pub fn add_account(&mut self) {
+        self.signin = crate::app::SignInState { adding: true, client_id: self.settings.client_id_override.clone(), ..Default::default() };
+        self.backstage = None;
+    }
+
     pub fn toggle_favorite(&mut self, id: &str) {
         if self.settings.favorites.is_empty() {
-            self.settings.favorites = ["inbox", "sentitems", "drafts", "deleteditems"].iter().filter_map(|wk| self.folder_wk(wk)).collect();
+            self.settings.favorites = default_favorites(self);
         }
         if let Some(p) = self.settings.favorites.iter().position(|f| f == id) {
             self.settings.favorites.remove(p);
@@ -100,20 +132,21 @@ fn section(ui: &mut Ui, title: &str, key: &str, default_open: bool) -> bool {
     open
 }
 
-fn tree(app: &mut MailApp, ui: &mut Ui, all: &[FolderRow], f: &FolderRow, depth: usize) {
+fn tree(app: &mut MailApp, ui: &mut Ui, acct: usize, all: &[FolderRow], f: &FolderRow, depth: usize) {
     let kids: Vec<&FolderRow> = all.iter().filter(|c| c.parent_id.as_deref() == Some(f.id.as_str()) && !c.hidden).collect();
-    let expanded = folder_row(app, ui, f, depth, !kids.is_empty(), false);
+    let expanded = folder_row(app, ui, acct, f, depth, !kids.is_empty(), false);
     if expanded && depth < 12 {
         for k in kids {
-            tree(app, ui, all, k, depth + 1);
+            tree(app, ui, acct, all, k, depth + 1);
         }
     }
 }
 
 /// One folder. Returns whether its children are showing.
-fn folder_row(app: &mut MailApp, ui: &mut Ui, f: &FolderRow, depth: usize, has_kids: bool, favorite: bool) -> bool {
+#[allow(clippy::too_many_arguments)]
+fn folder_row(app: &mut MailApp, ui: &mut Ui, acct: usize, f: &FolderRow, depth: usize, has_kids: bool, favorite: bool) -> bool {
     let t = Tokens::get(ui.ctx());
-    let selected = app.mail.folder.as_deref() == Some(f.id.as_str()) && app.view == View::Mail && app.mail.searching.is_none();
+    let selected = app.active == acct && app.mail.folder.as_deref() == Some(f.id.as_str()) && app.view == View::Mail && app.mail.searching.is_none();
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
     let dragging = egui::DragAndDrop::has_payload_of_type::<DragMessages>(ui.ctx());
     let drop_hover = dragging && resp.contains_pointer();
@@ -126,7 +159,7 @@ fn folder_row(app: &mut MailApp, ui: &mut Ui, f: &FolderRow, depth: usize, has_k
         ui.painter().rect_filled(r, 4.0, t.hover);
     }
     let x0 = r.min.x + 6.0 + depth as f32 * 14.0;
-    let key = if favorite { format!("fav:{}", f.id) } else { f.id.clone() };
+    let key = if favorite { format!("fav:{}", f.id) } else { format!("{acct}:{}", f.id) };
     let mut expanded = app.mail.expanded.contains(&f.id) || (f.well_known.as_deref() == Some("inbox") && !app.mail.expanded.contains(&format!("closed:{}", f.id)));
     if has_kids {
         let ar = Rect::from_center_size(pos2(x0 + 6.0, r.center().y), vec2(14.0, 14.0));
@@ -183,9 +216,13 @@ fn folder_row(app: &mut MailApp, ui: &mut Ui, f: &FolderRow, depth: usize, has_k
     }
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &f.name));
     if resp.clicked() {
-        app.select_folder(&f.id);
+        app.select_folder_in(acct, &f.id);
     }
     if let Some(p) = resp.dnd_release_payload::<DragMessages>() {
+        if acct != app.active {
+            app.errors.push("Messages can't be moved between accounts yet. Forward them instead.".into());
+            return expanded && has_kids;
+        }
         let ids = p.0.clone();
         app.mail.selected = ids;
         app.move_selected(&f.id);
@@ -217,13 +254,14 @@ fn folder_row(app: &mut MailApp, ui: &mut Ui, f: &FolderRow, depth: usize, has_k
             app.mail.confirm = Some(Confirm::EmptyFolder(fid.clone(), fname.clone()));
             ui.close();
         }
-        let fav = app.settings.favorites.contains(&fid) || (app.settings.favorites.is_empty() && matches!(wk.as_deref(), Some("inbox" | "sentitems" | "drafts" | "deleteditems")));
+        let fav = if app.settings.favorites.is_empty() { default_favorites(app).contains(&fid) } else { app.settings.favorites.contains(&fid) };
         if widgets::menu_item(ui, "star", if fav { "Remove from Favorites" } else { "Show in Favorites" }, "").clicked() {
             app.toggle_favorite(&fid);
             ui.close();
         }
         if widgets::menu_item(ui, "update_folder", "Update Folder", "").clicked() {
-            app.send(mailcraft_sync::Command::SyncFolder(fid.clone()));
+            let owner = acct;
+            app.send_to(owner, mailcraft_sync::Command::SyncFolder(fid.clone()));
             ui.close();
         }
     });
@@ -265,7 +303,8 @@ impl MailApp {
             self.tab = 1;
             if v == View::Calendar {
                 self.cal.dirty = true;
-                self.cal.request_window(self.session.as_ref().map(|s| &s.sync), &self.settings);
+                let syncs: Vec<&mailcraft_sync::SyncHandle> = self.sessions.iter().map(|s| &s.sync).collect();
+                self.cal.request_window(&syncs, &self.settings);
             }
         }
     }

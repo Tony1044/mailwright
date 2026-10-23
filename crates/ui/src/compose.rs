@@ -10,6 +10,8 @@ use crate::widgets;
 
 pub struct ComposeWin {
     pub wid: u64,
+    /// The account it's sent from (its address).
+    pub account: String,
     pub local_id: String,
     pub draft_id: Option<String>,
     pub reply_to: Option<(String, String)>,
@@ -115,8 +117,10 @@ fn quote_header(m: &MessageRow) -> String {
 impl MailApp {
     fn blank_compose(&mut self) -> ComposeWin {
         let wid = self.next_id();
+        let account = self.session().map(|s| s.label().to_string()).unwrap_or_default();
         ComposeWin {
             wid,
+            account,
             local_id: format!("local:{}-{wid}", chrono::Utc::now().timestamp_millis()),
             draft_id: None,
             reply_to: None,
@@ -169,9 +173,9 @@ impl MailApp {
     /// Reply, reply all or forward the selected message.
     pub fn reply(&mut self, kind: &str) {
         let Some(id) = self.mail.selected.first().cloned() else { return };
-        let Some(m) = self.session.as_ref().and_then(|s| s.store.message(&id).ok().flatten()) else { return };
-        let attachments = self.session.as_ref().map(|s| s.store.attachments(&id).unwrap_or_default()).unwrap_or_default();
-        let me = self.session.as_ref().map(|s| s.address.to_ascii_lowercase()).unwrap_or_default();
+        let Some(m) = self.session().and_then(|s| s.store.message(&id).ok().flatten()) else { return };
+        let attachments = self.session().map(|s| s.store.attachments(&id).unwrap_or_default()).unwrap_or_default();
+        let me = self.session().map(|s| s.address.to_ascii_lowercase()).unwrap_or_default();
         let mut c = self.blank_compose();
         let base = strip_prefixes(&m.subject);
         match kind {
@@ -263,7 +267,8 @@ impl MailApp {
                     return;
                 }
                 let subject = compose.subject.clone();
-                self.act(Action::Send { compose });
+                let owner = self.session_by_address(&self.composes[i].account).unwrap_or(self.active);
+                self.send_to(owner, mailcraft_sync::Command::Do(Action::Send { compose }));
                 self.composes[i].open = false;
                 self.status = format!("Sending \u{201c}{subject}\u{201d}\u{2026}");
             }
@@ -277,7 +282,8 @@ impl MailApp {
     fn save_compose(&mut self, i: usize) {
         match self.build(&self.composes[i]) {
             Ok(compose) => {
-                self.act(Action::SaveDraft { compose });
+                let owner = self.session_by_address(&self.composes[i].account).unwrap_or(self.active);
+                self.send_to(owner, mailcraft_sync::Command::Do(Action::SaveDraft { compose }));
                 // Once the server has it, `DraftSaved` points this window at it; meanwhile a new
                 // local id keeps the next save apart.
                 let c = &mut self.composes[i];
@@ -353,6 +359,7 @@ pub fn windows(app: &mut MailApp, ctx: &Context) {
         let mut todo: Vec<Do> = Vec::new();
         let builder = egui::ViewportBuilder::default().with_title(title).with_inner_size([860.0, 700.0]).with_min_inner_size([520.0, 360.0]).with_drag_and_drop(true);
         let people = app.people.clone();
+        let accounts: Vec<String> = app.sessions.iter().map(|s| s.label().to_string()).collect();
         let tokens_dark = Tokens::get(ctx).dark;
         ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(("compose", wid)), builder, |ui, class| {
             let c = &mut app.composes[i];
@@ -380,7 +387,7 @@ pub fn windows(app: &mut MailApp, ctx: &Context) {
                 .frame(egui::Frame::new().fill(t.ribbon).inner_margin(egui::Margin::symmetric(6, 4)).stroke(egui::Stroke::new(1.0, t.border)))
                 .show(ui, |ui| compose_ribbon(ui, c, &mut todo));
             egui::CentralPanel::default().frame(egui::Frame::new().fill(t.reading).inner_margin(egui::Margin::symmetric(12, 10))).show(ui, |ui| {
-                compose_body(ui, c, &t, &people, &mut todo);
+                compose_body(ui, c, &t, &people, &accounts, &mut todo);
             });
             if c.asking_close {
                 egui::Modal::new(egui::Id::new(("ask_close", wid))).show(ui.ctx(), |ui| {
@@ -443,7 +450,8 @@ pub fn windows(app: &mut MailApp, ctx: &Context) {
                 Do::Discard => app.composes[i].open = false,
                 Do::People(q) => {
                     if app.people.0 != q {
-                        app.send(mailcraft_sync::Command::People(q));
+                        let owner = app.session_by_address(&app.composes[i].account).unwrap_or(app.active);
+                        app.send_to(owner, mailcraft_sync::Command::People(q));
                     }
                 }
             }
@@ -494,7 +502,7 @@ fn compose_ribbon(ui: &mut Ui, c: &mut ComposeWin, todo: &mut Vec<Do>) {
     });
 }
 
-fn compose_body(ui: &mut Ui, c: &mut ComposeWin, t: &Tokens, people: &(String, Vec<Addr>), todo: &mut Vec<Do>) {
+fn compose_body(ui: &mut Ui, c: &mut ComposeWin, t: &Tokens, people: &(String, Vec<Addr>), accounts: &[String], todo: &mut Vec<Do>) {
     if let Some(e) = c.error.clone() {
         if let Some(r) = widgets::info_bar(ui, "info", &e, true, Some("Dismiss")) {
             if r.clicked() {
@@ -505,7 +513,7 @@ fn compose_body(ui: &mut Ui, c: &mut ComposeWin, t: &Tokens, people: &(String, V
     }
     ui.horizontal_top(|ui| {
         // The big Send button, to the left of the address lines.
-        let rows = if c.show_bcc { 3.0 } else { 2.0 };
+        let rows = if c.show_bcc { 3.0 } else { 2.0 } + if accounts.len() > 1 { 1.0 } else { 0.0 };
         let (r, resp) = ui.allocate_exact_size(vec2(64.0, rows * 30.0 - 4.0), egui::Sense::click());
         let fill = if resp.hovered() { t.accent_text } else { t.accent };
         ui.painter().rect_filled(r, 4.0, fill);
@@ -518,6 +526,18 @@ fn compose_body(ui: &mut Ui, c: &mut ComposeWin, t: &Tokens, people: &(String, V
         ui.add_space(6.0);
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
+            if accounts.len() > 1 && c.draft_id.is_none() && c.reply_to.is_none() {
+                ui.horizontal(|ui| {
+                    ui.add_sized(vec2(40.0, 24.0), egui::Label::new(egui::RichText::new("From").color(t.text_dim)));
+                    egui::ComboBox::from_id_salt(("from", c.wid)).selected_text(c.account.clone()).width(ui.available_width().min(420.0)).show_ui(ui, |ui| {
+                        for a in accounts {
+                            ui.selectable_value(&mut c.account, a.clone(), a);
+                        }
+                    });
+                });
+            } else if accounts.len() > 1 {
+                ui.label(egui::RichText::new(format!("From: {}", c.account)).color(t.text_dim));
+            }
             address_line(ui, c, "To", "to", t, people, todo);
             address_line(ui, c, "Cc", "cc", t, people, todo);
             if c.show_bcc {

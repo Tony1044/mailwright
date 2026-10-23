@@ -4,6 +4,7 @@
 
 mod graphics;
 mod logging;
+mod signin_window;
 
 use mailcraft_ui::{MailApp, Settings};
 
@@ -29,6 +30,16 @@ impl eframe::App for App {
 fn main() -> eframe::Result {
     let config = mailcraft_ui::settings::config_dir();
     let data = mailcraft_ui::settings::data_dir();
+    // The sign-in window, run by the main process as a child.
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(p) = args.iter().position(|a| a == "--sign-in-window") {
+        let url = args.get(p + 1).cloned().unwrap_or_default();
+        if let Err(e) = signin_window::run(&url, &data.join("webview")) {
+            eprintln!("sign-in window: {e}");
+            std::process::exit(2);
+        }
+        return Ok(());
+    }
     logging::init(&data);
     log::info!("MailCraft {} starting", env!("CARGO_PKG_VERSION"));
     let settings_path = config.join("settings.json");
@@ -57,6 +68,9 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             let mut app = MailApp::new(settings, Some(settings_path), Some(data));
+            if let Ok(exe) = std::env::current_exe() {
+                app.sign_in_window = Some(std::sync::Arc::new(move |url: &str| std::process::Command::new(&exe).arg("--sign-in-window").arg(url).spawn()));
+            }
             mailcraft_ui::theme::apply(&cc.egui_ctx, app.settings.appearance);
             if demo {
                 app.start_demo();
@@ -64,7 +78,7 @@ fn main() -> eframe::Result {
                 app.resume();
             }
             if let Some(to) = mailto.filter(|t| !t.is_empty())
-                && app.session.is_some() {
+                && !app.sessions.is_empty() {
                     app.new_mail_to(&to);
                 }
             Ok(Box::new(App(app)))

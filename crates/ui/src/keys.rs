@@ -10,7 +10,7 @@ fn take(ctx: &Context, m: Modifiers, k: Key) -> bool {
 }
 
 pub fn shortcuts(app: &mut MailApp, ctx: &Context) {
-    if app.session.is_none() || app.backstage.is_some() {
+    if app.sessions.is_empty() || app.backstage.is_some() {
         return;
     }
     let typing = ctx.memory(|m| m.focused().is_some()) && ctx.egui_wants_keyboard_input();

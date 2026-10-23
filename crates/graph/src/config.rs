@@ -5,6 +5,25 @@ use serde::{Deserialize, Serialize};
 pub const LOGIN_BASE: &str = "https://login.microsoftonline.com";
 pub const GRAPH_BASE: &str = "https://graph.microsoft.com/v1.0";
 
+/// The app registration built into this copy of MailCraft (set with `MAILCRAFT_CLIENT_ID` when
+/// building): a multi-tenant registration, so users only ever type their email address.
+pub const BUILTIN_CLIENT_ID: Option<&str> = match option_env!("MAILCRAFT_CLIENT_ID") {
+    Some(id) => Some(id),
+    None => Some(MAILCRAFT_APP_ID),
+};
+
+/// MailCraft's multi-tenant app registration (any Entra ID tenant and personal Microsoft accounts).
+pub const MAILCRAFT_APP_ID: &str = "6b43e75b-9b99-4d73-8575-390390a86137";
+
+/// The client ID to use: an override (an organisation's own registration), else the built-in one.
+pub fn client_id(override_id: &str) -> Option<String> {
+    let o = override_id.trim();
+    if is_guid(o) {
+        return Some(o.to_string());
+    }
+    std::env::var("MAILCRAFT_CLIENT_ID").ok().filter(|v| is_guid(v.trim())).or(BUILTIN_CLIENT_ID.map(str::to_string)).filter(|v| is_guid(v.trim()))
+}
+
 /// Delegated permissions MailCraft asks for. All are user-consentable in a default tenant;
 /// an organisation that requires admin consent grants them once for everyone.
 pub const SCOPES: &[&str] = &[

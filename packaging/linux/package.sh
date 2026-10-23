@@ -29,7 +29,7 @@ Section: mail
 Priority: optional
 Architecture: $ARCH
 Installed-Size: $SIZE
-Depends: libc6 (>= 2.39), libgcc-s1, libxkbcommon0, libwayland-client0, libx11-6, libxcursor1, libxi6, libxrandr2, libgl1 | libvulkan1, libdbus-1-3
+Depends: libc6 (>= 2.39), libgcc-s1, libwebkit2gtk-4.1-0, libgtk-3-0, libxkbcommon0, libwayland-client0, libx11-6, libxcursor1, libxi6, libxrandr2, libgl1 | libvulkan1, libdbus-1-3
 Recommends: xdg-desktop-portal, gnome-keyring | kwalletmanager
 Maintainer: MailCraft <mailcraft@storyteller.ai>
 Homepage: https://github.com/storytold

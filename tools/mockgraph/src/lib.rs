@@ -102,6 +102,9 @@ pub struct State {
     pub sent: Vec<Value>,
     /// Access token lifetime in seconds, as reported to the client.
     pub token_lifetime: i64,
+    /// The mailbox's owner.
+    pub owner_name: String,
+    pub owner_address: String,
 }
 
 impl State {
@@ -124,6 +127,8 @@ impl State {
             log: Vec::new(),
             sent: Vec::new(),
             token_lifetime: 3600,
+            owner_name: ME_NAME.into(),
+            owner_address: ME_ADDRESS.into(),
         }
     }
 
@@ -181,8 +186,8 @@ impl State {
         id
     }
 
-    fn me() -> Value {
-        json!({"emailAddress": {"name": ME_NAME, "address": ME_ADDRESS}})
+    fn me(&self) -> Value {
+        json!({"emailAddress": {"name": self.owner_name, "address": self.owner_address}})
     }
 
     fn msg_json(&self, m: &Msg, select: Option<&str>, expand_event: bool) -> Value {
@@ -271,6 +276,37 @@ impl MockGraph {
         Self::start_on(0, false)
     }
 
+    /// Start with the sample mailbox belonging to someone else (a second account in tests).
+    pub fn start_as(name: &str, address: &str) -> std::io::Result<MockGraph> {
+        let m = Self::start_on(0, true)?;
+        {
+            let mut st = m.state();
+            st.owner_name = name.to_string();
+            st.owner_address = address.to_string();
+            let swap = |v: &mut Value| {
+                let text = v.to_string().replace(ME_ADDRESS, address).replace(ME_NAME, name);
+                if let Ok(n) = serde_json::from_str(&text) {
+                    *v = n;
+                }
+            };
+            for msg in &mut st.messages {
+                let mut v = Value::Object(std::mem::take(&mut msg.props));
+                swap(&mut v);
+                if let Value::Object(o) = v {
+                    msg.props = o;
+                }
+            }
+            for e in &mut st.events {
+                let mut v = Value::Object(std::mem::take(&mut e.props));
+                swap(&mut v);
+                if let Value::Object(o) = v {
+                    e.props = o;
+                }
+            }
+        }
+        Ok(m)
+    }
+
     pub fn start_on(port: u16, sample: bool) -> std::io::Result<MockGraph> {
         let server = tiny_http::Server::http(("127.0.0.1", port)).map_err(|e| std::io::Error::other(e.to_string()))?;
         let port = server.server_addr().to_ip().map(|a| a.port()).unwrap_or(port);
@@ -299,6 +335,10 @@ impl MockGraph {
     }
     pub fn graph_base(&self) -> String {
         format!("{}/v1.0", self.root)
+    }
+    /// A DNS-over-HTTPS endpoint answering MX lookups for test domains.
+    pub fn doh_base(&self) -> String {
+        format!("{}/dns-query", self.root)
     }
 
     pub fn state(&self) -> MutexGuard<'_, State> {
@@ -411,6 +451,30 @@ fn route(st: &mut State, root: &str, method: &str, raw_url: &str, auth: Option<&
     let segs: Vec<&str> = segs.iter().map(String::as_str).collect();
 
     match segs.first().copied() {
+        Some("login") if segs.get(2) == Some(&"userrealm") => {
+            let email = segs.get(3).copied().unwrap_or("");
+            let domain = email.rsplit_once('@').map(|(_, d)| d.to_ascii_lowercase()).unwrap_or_default();
+            let ours = st.owner_address.rsplit_once('@').map(|(_, d)| d.to_ascii_lowercase()).unwrap_or_default();
+            return if domain == ours || domain.ends_with(".onmicrosoft.example") {
+                ok(json!({"NameSpaceType": "Managed", "DomainName": domain, "FederationBrandName": "Harbourview", "CloudInstanceName": "microsoftonline.com"}))
+            } else if domain.starts_with("fed.") {
+                ok(json!({"NameSpaceType": "Federated", "DomainName": domain, "FederationBrandName": "Federated Co", "AuthURL": "https://sts.example/adfs"}))
+            } else {
+                ok(json!({"NameSpaceType": "Unknown", "Login": email}))
+            };
+        }
+        Some("dns-query") => {
+            let name = q.get("name").unwrap_or("").to_ascii_lowercase();
+            let mx = if name.starts_with("gmail") || name.ends_with("googlemail.example") {
+                "10 aspmx.l.google.com."
+            } else if name.starts_with("m365") {
+                "0 m365-example.mail.protection.outlook.com."
+            } else {
+                ""
+            };
+            let answer: Vec<Value> = if mx.is_empty() { vec![] } else { vec![json!({"name": name, "type": 15, "data": mx})] };
+            return ok(json!({"Status": 0, "Answer": answer}));
+        }
         Some("login") => return login(st, root, method, &segs, &q, body),
         Some("devicelogin") => return Reply { status: 200, body: b"Mock device login".to_vec(), content_type: "text/plain", headers: vec![] },
         Some("upload") => return upload(st, method, &segs, range, body),
@@ -435,7 +499,7 @@ fn route(st: &mut State, root: &str, method: &str, raw_url: &str, auth: Option<&
     let _ = prefer;
 
     match (method, &segs[1..]) {
-        ("GET", ["me"]) => ok(json!({"id": "user-1", "displayName": ME_NAME, "mail": ME_ADDRESS, "userPrincipalName": ME_ADDRESS})),
+        ("GET", ["me"]) => ok(json!({"id": "user-1", "displayName": st.owner_name, "mail": st.owner_address, "userPrincipalName": st.owner_address})),
         ("GET", ["me", "mailboxSettings"]) => ok(json!({"timeZone": "GMT Standard Time"})),
 
         // ---- folders
@@ -530,7 +594,7 @@ fn route(st: &mut State, root: &str, method: &str, raw_url: &str, auth: Option<&
             let mut props = Map::new();
             props.insert("isDraft".into(), json!(true));
             props.insert("isRead".into(), json!(true));
-            props.insert("from".into(), State::me());
+            props.insert("from".into(), st.me());
             let now = now_iso();
             props.insert("createdDateTime".into(), json!(now));
             props.insert("receivedDateTime".into(), json!(now));
@@ -642,7 +706,7 @@ fn route(st: &mut State, root: &str, method: &str, raw_url: &str, auth: Option<&
             }
             let id = st.new_id("AAMkEv");
             let mut props = Map::new();
-            props.insert("organizer".into(), State::me());
+            props.insert("organizer".into(), st.me());
             props.insert("isOrganizer".into(), json!(true));
             props.insert("responseStatus".into(), json!({"response": "organizer"}));
             props.insert("type".into(), json!("singleInstance"));
@@ -938,7 +1002,8 @@ fn create_reply(st: &mut State, id: &str, action: &str) -> Reply {
     let subject = orig.props.get("subject").and_then(Value::as_str).unwrap_or("").to_string();
     let prefix = if action == "createForward" { "FW: " } else { "RE: " };
     let from = orig.props.get("from").cloned().unwrap_or(Value::Null);
-    let me_addr = |r: &Value| r["emailAddress"]["address"].as_str().is_some_and(|a| a.eq_ignore_ascii_case(ME_ADDRESS));
+    let owner = st.owner_address.clone();
+    let me_addr = |r: &Value| r["emailAddress"]["address"].as_str().is_some_and(|a| a.eq_ignore_ascii_case(&owner));
     let (to, cc) = match action {
         "createReply" => (json!([from.clone()]), json!([])),
         "createReplyAll" => {
@@ -965,7 +1030,7 @@ fn create_reply(st: &mut State, id: &str, action: &str) -> Reply {
     props.insert("ccRecipients".into(), cc);
     props.insert("isDraft".into(), json!(true));
     props.insert("isRead".into(), json!(true));
-    props.insert("from".into(), State::me());
+    props.insert("from".into(), st.me());
     props.insert("conversationId".into(), orig.props.get("conversationId").cloned().unwrap_or(Value::Null));
     props.insert("receivedDateTime".into(), json!(now_iso()));
     let new_id = st.new_id("AAMkDraft");
@@ -994,7 +1059,7 @@ fn send(st: &mut State, id: &str) -> Reply {
     let now = now_iso();
     let to_me = ["toRecipients", "ccRecipients", "bccRecipients"]
         .iter()
-        .any(|k| m.props.get(*k).and_then(Value::as_array).is_some_and(|a| a.iter().any(|r| r["emailAddress"]["address"].as_str().is_some_and(|x| x.eq_ignore_ascii_case(ME_ADDRESS)))));
+        .any(|k| m.props.get(*k).and_then(Value::as_array).is_some_and(|a| a.iter().any(|r| r["emailAddress"]["address"].as_str().is_some_and(|x| x.eq_ignore_ascii_case(&st.owner_address)))));
     let snapshot = st.msg_json(&m, None, false);
     st.sent.push(snapshot);
     if let Some(new_id) = st.move_msg(id, &sent) {

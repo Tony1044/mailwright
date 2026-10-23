@@ -59,61 +59,84 @@ pub fn show(app: &mut MailApp, ui: &mut Ui, page: Backstage) {
 
 fn info(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
     ui.label(egui::RichText::new("Account Information").font(semibold(26.0)));
-    ui.add_space(18.0);
-    let Some(s) = &app.session else { return };
-    ui.horizontal(|ui| {
-        let (r, _) = ui.allocate_exact_size(vec2(64.0, 64.0), Sense::hover());
-        widgets::avatar(ui, r.center(), 30.0, &s.name, &s.address);
-        ui.add_space(8.0);
-        ui.vertical(|ui| {
-            ui.label(egui::RichText::new(if s.name.is_empty() { s.address.clone() } else { s.name.clone() }).font(semibold(17.0)));
-            ui.label(egui::RichText::new(&s.address).color(t.text_dim));
-            let conn = if app.settings.work_offline {
-                "Working offline"
-            } else if s.demo {
-                "Sample mailbox (on this computer)"
-            } else if s.connected {
-                "Microsoft Exchange Online, through Microsoft Graph"
-            } else {
-                "Disconnected"
-            };
-            ui.label(egui::RichText::new(conn).color(t.text_dim));
-        });
-    });
-    ui.add_space(20.0);
-    section(ui, "Account Settings", t);
-    egui::Grid::new("acct").num_columns(2).spacing(vec2(16.0, 6.0)).show(ui, |ui| {
-        ui.label(egui::RichText::new("Application (client) ID").color(t.text_dim));
-        ui.label(&s.account.client_id);
-        ui.end_row();
-        ui.label(egui::RichText::new("Tenant").color(t.text_dim));
-        ui.label(s.account.tenant_or_default());
-        ui.end_row();
-        let store = mailcraft_graph::tokens::SystemTokenStore::new(app.data_dir.clone());
-        ui.label(egui::RichText::new("Sign-in kept in").color(t.text_dim));
-        ui.label(if s.demo { "memory (sample mailbox)".to_string() } else { mailcraft_graph::tokens::TokenStore::location(&store) });
-        ui.end_row();
-        ui.label(egui::RichText::new("Offline cache").color(t.text_dim));
-        let size: u64 = ["", "-wal"].iter().filter_map(|x| std::fs::metadata(format!("{}{x}", s.db_path.display())).ok()).map(|m| m.len()).sum();
-        ui.label(format!("{} ({}), mail from the last {} days", s.db_path.display(), widgets::size_text(size as i64), app.settings.offline_days));
-        ui.end_row();
-        ui.label(egui::RichText::new("Waiting to send").color(t.text_dim));
-        ui.label(format!("{} change{}", s.queued, if s.queued == 1 { "" } else { "s" }));
-        ui.end_row();
-    });
     ui.add_space(14.0);
     ui.horizontal(|ui| {
-        if widgets::icon_text(ui, "send_receive", "Send/Receive now", true).clicked() {
+        if widgets::icon_text(ui, "plus", "Add Account", true).clicked() {
+            app.add_account();
+        }
+        if widgets::icon_text(ui, "send_receive", "Send/Receive all accounts", true).clicked() {
             app.sync_all();
             app.backstage = None;
         }
-        if widgets::icon_text(ui, "sign_out", "Sign out", true).clicked() {
-            app.mail.confirm = Some(Confirm::SignOut);
-            app.backstage = None;
-        }
     });
-    ui.add_space(8.0);
-    ui.label(egui::RichText::new("Signing out removes this computer's copy of the mailbox and the saved sign-in. Nothing changes on the server.").color(t.text_dim).font(regular(12.0)));
+    ui.add_space(18.0);
+    let store = mailcraft_graph::tokens::SystemTokenStore::new(app.data_dir.clone());
+    let keyring = mailcraft_graph::tokens::TokenStore::location(&store);
+    let mut remove = None;
+    let mut reauth = None;
+    for (i, s) in app.sessions.iter().enumerate() {
+        egui::Frame::new().stroke(egui::Stroke::new(1.0, t.border)).corner_radius(8.0).inner_margin(egui::Margin::same(16)).show(ui, |ui| {
+            ui.set_width(ui.available_width().min(760.0));
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(56.0, 56.0), Sense::hover());
+                widgets::avatar(ui, r.center(), 26.0, &s.name, &s.address);
+                ui.add_space(8.0);
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new(if s.name.is_empty() { s.address.clone() } else { s.name.clone() }).font(semibold(16.0)));
+                    ui.label(egui::RichText::new(&s.address).color(t.text_dim));
+                    let kind = if s.demo {
+                        "Sample mailbox (on this computer)".to_string()
+                    } else if s.account.tenant == "consumers" {
+                        "Outlook.com, through Microsoft Graph".to_string()
+                    } else {
+                        "Microsoft 365 (Exchange Online), through Microsoft Graph".to_string()
+                    };
+                    let state = if s.needs_sign_in.is_some() {
+                        "needs you to sign in again"
+                    } else if app.settings.work_offline && !s.demo {
+                        "working offline"
+                    } else if s.connected {
+                        "connected"
+                    } else {
+                        "disconnected"
+                    };
+                    ui.label(egui::RichText::new(format!("{kind} \u{2013} {state}")).color(t.text_dim));
+                });
+            });
+            ui.add_space(8.0);
+            egui::Grid::new(("acct", i)).num_columns(2).spacing(vec2(16.0, 4.0)).show(ui, |ui| {
+                ui.label(egui::RichText::new("Sign-in kept in").color(t.text_dim));
+                ui.label(if s.demo { "memory (sample mailbox)".to_string() } else { keyring.clone() });
+                ui.end_row();
+                ui.label(egui::RichText::new("Offline cache").color(t.text_dim));
+                let size: u64 = ["", "-wal"].iter().filter_map(|x| std::fs::metadata(format!("{}{x}", s.db_path.display())).ok()).map(|m| m.len()).sum();
+                ui.label(format!("{} ({})", s.db_path.display(), widgets::size_text(size as i64)));
+                ui.end_row();
+                ui.label(egui::RichText::new("Waiting to send").color(t.text_dim));
+                ui.label(format!("{} change{}", s.queued, if s.queued == 1 { "" } else { "s" }));
+                ui.end_row();
+            });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if s.needs_sign_in.is_some() && widgets::icon_text(ui, "lock", "Sign in again", true).clicked() {
+                    reauth = Some(i);
+                }
+                if widgets::icon_text(ui, "sign_out", "Remove Account", true).clicked() {
+                    remove = Some(s.label().to_string());
+                }
+            });
+        });
+        ui.add_space(12.0);
+    }
+    if let Some(i) = reauth {
+        app.backstage = None;
+        app.reauthenticate(i);
+    }
+    if let Some(a) = remove {
+        app.mail.confirm = Some(Confirm::RemoveAccount(a));
+        app.backstage = None;
+    }
+    ui.label(egui::RichText::new("Removing an account deletes this computer's copy of its mail and its saved sign-in. Nothing changes on the server.").color(t.text_dim).font(regular(12.0)));
 }
 
 fn section(ui: &mut Ui, title: &str, t: &Tokens) {
@@ -230,7 +253,7 @@ fn options(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
 
 fn apply_options(app: &mut MailApp, ctx: &egui::Context, d: &Settings) {
     let days_changed = d.offline_days != app.settings.offline_days;
-    app.settings = Settings { account: app.settings.account.clone(), ..d.clone() };
+    app.settings = Settings { accounts: app.settings.accounts.clone(), ..d.clone() };
     crate::theme::set_appearance(ctx, d.appearance);
     if days_changed {
         app.send(mailcraft_sync::Command::SetWindow(d.offline_days));

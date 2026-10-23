@@ -38,6 +38,8 @@ pub struct EventEditor {
     pub open: bool,
     pub error: Option<String>,
     pub confirm_delete: bool,
+    /// Calendars it can go in: (id, "name – account").
+    pub calendars: Vec<(String, String)>,
 }
 
 fn minutes_of(ts: i64) -> (NaiveDate, u32) {
@@ -59,7 +61,8 @@ impl MailApp {
         let (sd, sm) = minutes_of(start);
         let (ed, em) = minutes_of(start + 1800);
         let cal = self.cal.calendars.iter().find(|c| c.is_default).or(self.cal.calendars.first()).map(|c| c.id.clone());
-        let cal = cal.or_else(|| self.session.as_ref().and_then(|s| s.store.default_calendar().ok().flatten())).unwrap_or_default();
+        // The active account's default calendar.
+        let cal = self.session().and_then(|s| s.store.default_calendar().ok().flatten()).or(cal).unwrap_or_default();
         let wid = self.next_id();
         self.editors.push(EventEditor {
             wid,
@@ -89,16 +92,32 @@ impl MailApp {
             open: true,
             error: None,
             confirm_delete: false,
+            calendars: self.calendar_choices(),
         });
+    }
+
+    /// Every editable calendar, labelled with its account when there's more than one.
+    pub fn calendar_choices(&self) -> Vec<(String, String)> {
+        let many = self.sessions.len() > 1;
+        let mut out = Vec::new();
+        for s in &self.sessions {
+            for c in s.store.calendars().unwrap_or_default() {
+                if c.can_edit {
+                    out.push((c.id.clone(), if many { format!("{} \u{2013} {}", c.name, s.label()) } else { c.name.clone() }));
+                }
+            }
+        }
+        out
     }
 
     pub fn open_event(&mut self, id: &str) {
         if self.editors.iter().any(|e| e.id.as_deref() == Some(id)) {
             return;
         }
-        let Some(e) = self.session.as_ref().and_then(|s| s.store.event(id).ok().flatten()) else { return };
+        let Some(owner) = self.session_for_event(id) else { return };
+        let Some(e) = self.sessions[owner].store.event(id).ok().flatten() else { return };
         if !e.local {
-            self.send(mailcraft_sync::Command::OpenEvent(id.to_string()));
+            self.send_to(owner, mailcraft_sync::Command::OpenEvent(id.to_string()));
         }
         let wid = self.next_id();
         let ed = editor_from(wid, &e);
@@ -145,6 +164,7 @@ fn editor_from(wid: u64, e: &EventRow) -> EventEditor {
         open: true,
         error: None,
         confirm_delete: false,
+        calendars: Vec::new(),
     }
 }
 
@@ -210,7 +230,7 @@ pub fn windows(app: &mut MailApp, ctx: &Context) {
         // Pick up the body once it has downloaded.
         if !app.editors[i].body_loaded && !app.editors[i].dirty {
             if let Some(id) = app.editors[i].id.clone() {
-                if let Some(e) = app.session.as_ref().and_then(|s| s.store.event(&id).ok().flatten()) {
+                if let Some(e) = app.session_for_event(&id).and_then(|i| app.sessions[i].store.event(&id).ok().flatten()) {
                     if let Some(b) = e.body {
                         app.editors[i].body = mailcraft_html::to_text(&b);
                         app.editors[i].body_loaded = true;
@@ -264,7 +284,7 @@ pub fn windows(app: &mut MailApp, ctx: &Context) {
                 }
                 Do::Respond(r) => {
                     if let Some(id) = app.editors[i].id.clone() {
-                        app.act(Action::RespondEvent { id, response: r.into(), comment: String::new(), send: true });
+                        app.act_for_event(&id.clone(), Action::RespondEvent { id, response: r.into(), comment: String::new(), send: true });
                     }
                     app.editors[i].open = false;
                 }
@@ -292,9 +312,10 @@ impl MailApp {
         }
         match ed.id.clone() {
             Some(id) => {
-                self.act(Action::UpdateEvent { id, patch: body });
+                self.act_for_event(&id.clone(), Action::UpdateEvent { id, patch: body });
             }
             None => {
+                let owner = self.session_for_calendar(&self.editors[i].calendar_id).or(Some(self.active));
                 let local_id = format!("local:ev-{}", self.next_id());
                 let ed = &self.editors[i];
                 let (start, end) = if ed.all_day {
@@ -310,7 +331,7 @@ impl MailApp {
                     end,
                     all_day: ed.all_day,
                     location: ed.location.clone(),
-                    organizer: self.session.as_ref().map(|s| Addr::new(&s.name, &s.address)).unwrap_or_default(),
+                    organizer: owner.and_then(|i| self.sessions.get(i)).map(|s| Addr::new(&s.name, &s.address)).unwrap_or_default(),
                     show_as: ed.show_as.clone(),
                     response: "organizer".into(),
                     is_organizer: true,
@@ -320,11 +341,14 @@ impl MailApp {
                     local: true,
                     ..Default::default()
                 };
-                if let Some(s) = &self.session {
+                if let Some(s) = owner.and_then(|i| self.sessions.get(i)) {
                     let _ = s.store.insert_local_event(&row);
                 }
                 let calendar_id = ed.calendar_id.clone();
-                self.act(Action::CreateEvent { local_id, calendar_id, body });
+                match owner {
+                    Some(i) => self.send_to(i, mailcraft_sync::Command::Do(Action::CreateEvent { local_id, calendar_id, body })),
+                    None => self.act(Action::CreateEvent { local_id, calendar_id, body }),
+                }
                 self.cal.dirty = true;
             }
         }
@@ -499,6 +523,16 @@ fn event_form(ui: &mut Ui, ed: &mut EventEditor, t: &Tokens) {
         });
     };
     let mut dirty = false;
+    if ed.id.is_none() && ed.calendars.len() > 1 {
+        row(ui, "Calendar", &mut |ui| {
+            let current = ed.calendars.iter().find(|(id, _)| *id == ed.calendar_id).map(|(_, l)| l.clone()).unwrap_or_default();
+            egui::ComboBox::from_id_salt(("cal", ed.wid)).selected_text(current).width(320.0).show_ui(ui, |ui| {
+                for (id, label) in ed.calendars.clone() {
+                    ui.selectable_value(&mut ed.calendar_id, id, label);
+                }
+            });
+        });
+    }
     row(ui, "Title", &mut |ui| {
         dirty |= ui.add_enabled(edit, egui::TextEdit::singleline(&mut ed.subject).desired_width(f32::INFINITY).margin(vec2(6.0, 4.0)).hint_text("Add a title")).changed();
     });

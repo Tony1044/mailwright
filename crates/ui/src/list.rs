@@ -116,7 +116,7 @@ pub fn list(app: &mut MailApp, ui: &mut Ui) {
                 "We didn't find anything to show here."
             };
             ui.label(egui::RichText::new(msg).color(t.text_dim));
-            if app.mail.searching.is_some() && app.session.as_ref().is_some_and(|s| s.connected) && app.mail.server_results.is_none() && ui.link("Search the server").clicked() {
+            if app.mail.searching.is_some() && app.session().is_some_and(|s| s.connected) && app.mail.server_results.is_none() && ui.link("Search the server").clicked() {
                 app.search_server();
             }
         });
@@ -210,7 +210,7 @@ fn header(app: &mut MailApp, ui: &mut Ui) {
                 ui.close();
             }
         });
-        let online = app.session.as_ref().is_some_and(|s| s.connected);
+        let online = app.session().is_some_and(|s| s.connected);
         if online && app.mail.server_results.is_none() && ui.link("Include results from the server").clicked() {
             app.search_server();
         }

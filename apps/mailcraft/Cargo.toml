@@ -17,6 +17,11 @@ log = { workspace = true }
 dirs = { workspace = true }
 chrono = { workspace = true }
 pollster = "0.4"
+open = { workspace = true }
+# MailCraft's own sign-in window (WebView2 on Windows, WebKitGTK on Linux), run as a separate
+# process so the web view and its event loop never share the main window's.
+wry = "0.57"
+tao = "0.37"
 
 [build-dependencies]
 winresource = "0.1"

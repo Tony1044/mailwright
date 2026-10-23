@@ -40,8 +40,13 @@ impl CalendarView {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
-    /// The mailbox signed in to (its client ID, tenant and address).
+    /// The mailboxes signed in to, in the order they show in the folder pane.
+    pub accounts: Vec<AccountConfig>,
+    /// From before multiple accounts: read into `accounts`.
+    #[serde(skip_serializing)]
     pub account: Option<AccountConfig>,
+    /// An organisation's own app registration, used instead of the built-in one.
+    pub client_id_override: String,
     /// The client ID and tenant typed on the sign-in screen, kept for next time.
     pub last_client_id: String,
     pub last_tenant: String,
@@ -79,7 +84,9 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            accounts: Vec::new(),
             account: None,
+            client_id_override: String::new(),
             last_client_id: String::new(),
             last_tenant: "organizations".into(),
             appearance: Appearance::System,
@@ -120,7 +127,16 @@ pub fn data_dir() -> PathBuf {
 
 impl Settings {
     pub fn load(path: &Path) -> Settings {
-        std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+        let mut s: Settings = std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        if let Some(a) = s.account.take() {
+            if !a.username.is_empty() && !s.accounts.iter().any(|x| x.username.eq_ignore_ascii_case(&a.username)) {
+                s.accounts.push(a);
+            }
+        }
+        if s.client_id_override.is_empty() && mailcraft_graph::config::is_guid(s.last_client_id.trim()) && mailcraft_graph::config::BUILTIN_CLIENT_ID.is_none() {
+            s.client_id_override = s.last_client_id.trim().to_string();
+        }
+        s
     }
 
     pub fn save(&self, path: &Path) {

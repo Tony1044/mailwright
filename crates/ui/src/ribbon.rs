@@ -216,7 +216,7 @@ fn send_receive(app: &mut MailApp, ui: &mut Ui) {
                 app.send(mailcraft_sync::Command::SyncFolder(f));
             }
         }
-        let queued = app.session.as_ref().map(|s| s.queued).unwrap_or(0);
+        let queued = app.session().map(|s| s.queued).unwrap_or(0);
         if big(ui, "send_all", "Send\nAll", true, false, false).on_hover_text(format!("{queued} waiting")).clicked() {
             app.sync_all();
         }
@@ -246,7 +246,7 @@ fn folder_tab(app: &mut MailApp, ui: &mut Ui) {
     let cur = app.current_folder().cloned();
     let user_folder = cur.as_ref().is_some_and(|f| f.well_known.is_none());
     group(ui, "New", |ui| {
-        if big(ui, "folder_new", "New\nFolder", app.session.is_some(), false, false).clicked() {
+        if big(ui, "folder_new", "New\nFolder", !app.sessions.is_empty(), false, false).clicked() {
             app.mail.new_folder = Some((cur.as_ref().map(|f| f.id.clone()), String::new()));
         }
     });

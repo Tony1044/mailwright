@@ -108,23 +108,32 @@ impl CalState {
         }
     }
 
-    pub fn request_window(&mut self, sync: Option<&SyncHandle>, s: &Settings) {
+    pub fn request_window(&mut self, syncs: &[&SyncHandle], s: &Settings) {
         let r = self.range(s);
         if self.requested != Some(r) {
             self.requested = Some(r);
             self.dirty = true;
-            if let Some(h) = sync {
+            for h in syncs {
                 h.send(Command::CalendarWindow { from: r.0, to: r.1 });
             }
         }
     }
 
-    pub fn reload(&mut self, store: Option<&Store>) {
+    /// Ask every account for the window again (one was added).
+    pub fn forget_window(&mut self) {
+        self.requested = None;
+    }
+
+    pub fn reload(&mut self, stores: &[&Store]) {
         self.dirty = false;
-        let Some(store) = store else { return };
-        self.calendars = store.calendars().unwrap_or_default();
         let (from, to) = self.requested.unwrap_or((0, 0));
-        self.events = store.events(from, to).unwrap_or_default().into_iter().filter(|e| !self.hidden.contains(&e.calendar_id)).collect();
+        self.calendars.clear();
+        self.events.clear();
+        for store in stores {
+            self.calendars.extend(store.calendars().unwrap_or_default());
+            self.events.extend(store.events(from, to).unwrap_or_default().into_iter().filter(|e| !self.hidden.contains(&e.calendar_id)));
+        }
+        self.events.sort_by(|a, b| (!a.all_day, a.start, -a.end).cmp(&(!b.all_day, b.start, -b.end)));
     }
 
     pub fn go_today(&mut self) {
@@ -200,9 +209,11 @@ fn tint(c: Color32, t: &Tokens, amount: f32) -> Color32 {
 
 pub fn view(app: &mut MailApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    app.cal.request_window(app.session.as_ref().map(|s| &s.sync), &app.settings);
+    let syncs: Vec<&SyncHandle> = app.sessions.iter().map(|s| &s.sync).collect();
+    app.cal.request_window(&syncs, &app.settings);
     if app.cal.dirty {
-        app.cal.reload(app.session.as_ref().map(|s| &s.store));
+        let stores: Vec<&Store> = app.sessions.iter().map(|s| &s.store).collect();
+        app.cal.reload(&stores);
     }
     egui::Panel::left("cal_nav").resizable(false).exact_size(app.settings.folder_pane_width.clamp(200.0, 300.0)).frame(egui::Frame::new().fill(t.panel)).show(ui, |ui| {
         egui::Panel::bottom("cal_navbar").exact_size(44.0).frame(egui::Frame::new()).show(ui, |ui| crate::folders::nav_bar(app, ui, false));
@@ -558,7 +569,7 @@ fn event_chip(app: &mut MailApp, ui: &mut Ui, r: Rect, e: &EventRow, t: &Tokens,
             ui.separator();
             for (icon, label, r) in [("accept", "Accept", "accept"), ("tentative", "Tentative", "tentative"), ("decline", "Decline", "decline")] {
                 if widgets::menu_item(ui, icon, label, "").clicked() {
-                    app.act(Action::RespondEvent { id: ev.id.clone(), response: r.into(), comment: String::new(), send: true });
+                    app.act_for_event(&ev.id, Action::RespondEvent { id: ev.id.clone(), response: r.into(), comment: String::new(), send: true });
                     ui.close();
                 }
             }
@@ -626,14 +637,16 @@ fn month(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
 
 impl MailApp {
     pub fn delete_event(&mut self, id: &str) {
-        let Some(e) = self.cal.events.iter().find(|e| e.id == id).cloned().or_else(|| self.session.as_ref().and_then(|s| s.store.event(id).ok().flatten())) else { return };
-        if e.is_organizer && !e.attendees.is_empty() {
-            self.act(Action::CancelEvent { id: id.to_string(), comment: String::new() });
+        let owner = self.session_for_event(id);
+        let Some(e) = self.cal.events.iter().find(|e| e.id == id).cloned().or_else(|| owner.and_then(|i| self.sessions[i].store.event(id).ok().flatten())) else { return };
+        let a = if e.is_organizer && !e.attendees.is_empty() {
+            Action::CancelEvent { id: id.to_string(), comment: String::new() }
         } else if !e.is_organizer && e.response != "declined" && !e.organizer.address.is_empty() {
-            self.act(Action::RespondEvent { id: id.to_string(), response: "decline".into(), comment: String::new(), send: true });
+            Action::RespondEvent { id: id.to_string(), response: "decline".into(), comment: String::new(), send: true }
         } else {
-            self.act(Action::DeleteEvent { id: id.to_string() });
-        }
+            Action::DeleteEvent { id: id.to_string() }
+        };
+        self.act_for_event(id, a);
         self.cal.selected = None;
         self.cal.dirty = true;
     }

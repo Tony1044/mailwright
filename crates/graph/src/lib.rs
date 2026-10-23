@@ -16,6 +16,7 @@ pub mod auth;
 pub mod client;
 pub mod http;
 pub mod config;
+pub mod discovery;
 pub mod error;
 pub mod tokens;
 pub mod types;

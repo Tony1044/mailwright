@@ -100,9 +100,16 @@ pub fn authorize_url(cfg: &AccountConfig, redirect_uri: &str, state: &str, chall
         .append_pair("state", state)
         .append_pair("code_challenge", challenge)
         .append_pair("code_challenge_method", "S256")
-        .append_pair("prompt", "select_account");
-    if !cfg.username.is_empty() {
+        ;
+    if cfg.username.is_empty() {
+        u.query_pairs_mut().append_pair("prompt", "select_account");
+    } else {
         u.query_pairs_mut().append_pair("login_hint", &cfg.username);
+        if let Some(domain) = cfg.username.rsplit_once('@').map(|(_, d)| d.to_ascii_lowercase()) {
+            if !crate::discovery::is_consumer_domain(&domain) {
+                u.query_pairs_mut().append_pair("domain_hint", &domain);
+            }
+        }
     }
     u.to_string()
 }

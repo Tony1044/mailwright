@@ -269,3 +269,21 @@ fn search_and_people() {
     let people = client.people("ada").unwrap();
     assert_eq!(people[0].display_name.as_deref(), Some("Ada Lindqvist"));
 }
+
+#[test]
+fn discovery_tells_account_types_apart() {
+    use mailcraft_graph::discovery::{AccountKind, DiscoveryConfig, discover};
+    let mock = MockGraph::start().unwrap();
+    let cfg = DiscoveryConfig { login_base: mock.login_base(), doh: vec![mock.doh_base()] };
+    let d = discover(&cfg, "sam.carter@harbourview.example").unwrap();
+    assert_eq!(d.kind, AccountKind::Work { tenant: "harbourview.example".into(), organisation: "Harbourview".into(), federated: false });
+    assert_eq!(d.tenant().as_deref(), Some("harbourview.example"));
+    let d = discover(&cfg, "jo@fed.example").unwrap();
+    assert!(matches!(d.kind, AccountKind::Work { federated: true, .. }));
+    let d = discover(&cfg, "jo@m365.example").unwrap();
+    assert!(matches!(d.kind, AccountKind::Work { federated: false, .. }), "unknown realm but Exchange Online MX");
+    let d = discover(&cfg, "jo@gmail.example").unwrap();
+    assert_eq!(d.kind, AccountKind::Elsewhere { provider: "Google".into() });
+    assert_eq!(discover(&cfg, "jo@hotmail.co.uk").unwrap().kind, AccountKind::Personal);
+    assert!(discover(&cfg, "not-an-address").is_err());
+}

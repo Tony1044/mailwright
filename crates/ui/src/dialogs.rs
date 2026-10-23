@@ -21,7 +21,8 @@ pub fn show(app: &mut MailApp, ctx: &Context) {
             let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
             ui.horizontal(|ui| {
                 if (widgets::primary(ui, "OK").clicked() || enter) && !name.trim().is_empty() {
-                    app.send(mailcraft_sync::Command::CreateFolder { parent: parent.clone(), name: name.trim().to_string() });
+                    let owner = parent.as_deref().and_then(|p| app.session_for_folder(p)).unwrap_or(app.active);
+                    app.send_to(owner, mailcraft_sync::Command::CreateFolder { parent: parent.clone(), name: name.trim().to_string() });
                     keep = false;
                 }
                 if widgets::secondary(ui, "Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -45,7 +46,8 @@ pub fn show(app: &mut MailApp, ctx: &Context) {
             let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
             ui.horizontal(|ui| {
                 if (widgets::primary(ui, "OK").clicked() || enter) && !name.trim().is_empty() {
-                    app.send(mailcraft_sync::Command::RenameFolder { id: id.clone(), name: name.trim().to_string() });
+                    let owner = app.session_for_folder(&id).unwrap_or(app.active);
+                    app.send_to(owner, mailcraft_sync::Command::RenameFolder { id: id.clone(), name: name.trim().to_string() });
                     keep = false;
                 }
                 if widgets::secondary(ui, "Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -66,7 +68,7 @@ pub fn show(app: &mut MailApp, ctx: &Context) {
                 if ids.len() == 1 { "This item will be deleted for good. Continue?".to_string() } else { format!("These {} items will be deleted for good. Continue?", ids.len()) },
                 "Delete",
             ),
-            Confirm::SignOut => ("Sign Out".to_string(), "Sign out of MailCraft? This computer's copy of your mail and calendar is removed; nothing changes on the server.".to_string(), "Sign out"),
+            Confirm::RemoveAccount(a) => ("Remove Account".to_string(), format!("Remove {a} from MailCraft? This computer's copy of its mail and calendar, and its saved sign-in, are removed. Nothing changes on the server."), "Remove"),
         };
         let mut answer = None;
         egui::Modal::new(egui::Id::new("confirm")).show(ctx, |ui| {
@@ -96,11 +98,12 @@ pub fn show(app: &mut MailApp, ctx: &Context) {
                                 app.select_folder(&inbox);
                             }
                         }
-                        app.send(mailcraft_sync::Command::DeleteFolder { id });
+                        let owner = app.session_for_folder(&id).unwrap_or(app.active);
+                        app.send_to(owner, mailcraft_sync::Command::DeleteFolder { id });
                     }
                     Confirm::EmptyFolder(id, _) => app.empty_folder(&id),
                     Confirm::DeleteForever(ids) => app.delete_forever(ids),
-                    Confirm::SignOut => app.sign_out(),
+                    Confirm::RemoveAccount(a) => app.remove_account(&a),
                 }
             }
             Some(false) => app.mail.confirm = None,
