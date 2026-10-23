@@ -4,6 +4,7 @@
 
 mod graphics;
 mod logging;
+#[cfg(all(unix, not(target_os = "macos")))]
 mod signin_window;
 
 use mailcraft_ui::{MailApp, Settings};
@@ -27,11 +28,43 @@ impl eframe::App for App {
     }
 }
 
+/// How MailCraft shows Microsoft's sign-in page in a window of its own.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn sign_in_window(_data: &std::path::Path) -> Option<mailcraft_ui::app::SignInWindow> {
+    let exe = std::env::current_exe().ok()?;
+    Some(std::sync::Arc::new(move |url: &str| std::process::Command::new(&exe).arg("--sign-in-window").arg(url).spawn()))
+}
+
+/// Windows: Microsoft Edge (part of Windows 10 and 11) as a bare app window, with its own profile.
+#[cfg(target_os = "windows")]
+fn sign_in_window(data: &std::path::Path) -> Option<mailcraft_ui::app::SignInWindow> {
+    let edge = ["ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"]
+        .iter()
+        .filter_map(|v| std::env::var_os(v))
+        .map(|base| std::path::PathBuf::from(base).join("Microsoft").join("Edge").join("Application").join("msedge.exe"))
+        .find(|p| p.exists())?;
+    let profile = data.join("signin-profile");
+    Some(std::sync::Arc::new(move |url: &str| {
+        std::process::Command::new(&edge)
+            .arg(format!("--app={url}"))
+            .arg(format!("--user-data-dir={}", profile.display()))
+            .args(["--no-first-run", "--no-default-browser-check", "--window-size=520,720", "--disable-sync"])
+            .spawn()
+    }))
+}
+
+#[cfg(not(any(target_os = "windows", all(unix, not(target_os = "macos")))))]
+fn sign_in_window(_data: &std::path::Path) -> Option<mailcraft_ui::app::SignInWindow> {
+    None
+}
+
 fn main() -> eframe::Result {
     let config = mailcraft_ui::settings::config_dir();
     let data = mailcraft_ui::settings::data_dir();
     // The sign-in window, run by the main process as a child.
     let args: Vec<String> = std::env::args().collect();
+    let _ = &args;
+    #[cfg(all(unix, not(target_os = "macos")))]
     if let Some(p) = args.iter().position(|a| a == "--sign-in-window") {
         let url = args.get(p + 1).cloned().unwrap_or_default();
         if let Err(e) = signin_window::run(&url, &data.join("webview")) {
@@ -68,9 +101,7 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             let mut app = MailApp::new(settings, Some(settings_path), Some(data));
-            if let Ok(exe) = std::env::current_exe() {
-                app.sign_in_window = Some(std::sync::Arc::new(move |url: &str| std::process::Command::new(&exe).arg("--sign-in-window").arg(url).spawn()));
-            }
+            app.sign_in_window = sign_in_window(&mailcraft_ui::settings::data_dir());
             mailcraft_ui::theme::apply(&cc.egui_ctx, app.settings.appearance);
             if demo {
                 app.start_demo();

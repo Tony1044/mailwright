@@ -18,8 +18,11 @@ dirs = { workspace = true }
 chrono = { workspace = true }
 pollster = "0.4"
 open = { workspace = true }
-# MailCraft's own sign-in window (WebView2 on Windows, WebKitGTK on Linux), run as a separate
-# process so the web view and its event loop never share the main window's.
+
+# Linux: MailCraft's own sign-in window (WebKitGTK), run as a separate process so the web view and
+# its event loop never share the main window's. Windows uses an Edge app window instead, which
+# needs no WebView2 loader DLL beside mailcraft.exe.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 wry = "0.57"
 tao = "0.37"
 

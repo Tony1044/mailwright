@@ -459,6 +459,7 @@ impl MailApp {
         let wake = self.wake();
         let store = self.token_store(false);
         let window = self.sign_in_window.clone();
+        let done = Arc::new(AtomicBool::new(false));
         std::thread::spawn(move || {
             let tokens = match method {
                 SignInMethod::DeviceCode => match mailcraft_graph::auth::start_device_code(&cfg) {
@@ -471,26 +472,38 @@ impl MailApp {
                 },
                 SignInMethod::InApp => {
                     let watch = cancel.clone();
+                    let finished = done.clone();
                     let open = move |url: &str| -> bool {
                         let Some(w) = &window else { return false };
                         match w(url) {
                             Ok(mut child) => {
-                                // Closing the window without finishing cancels the sign-in.
+                                // Closing the window without finishing cancels the sign-in;
+                                // finishing closes the window.
                                 let watch = watch.clone();
+                                let finished = finished.clone();
                                 let url = url.to_string();
-                                std::thread::spawn(move || {
-                                    match child.wait() {
+                                std::thread::spawn(move || loop {
+                                    if finished.load(std::sync::atomic::Ordering::Relaxed) {
+                                        std::thread::sleep(std::time::Duration::from_millis(900));
+                                        let _ = child.kill();
+                                        let _ = child.wait();
+                                        return;
+                                    }
+                                    match child.try_wait() {
                                         // No web view on this computer: carry on in the browser.
-                                        Ok(st) if !st.success() => {
+                                        Ok(Some(st)) if !st.success() => {
                                             log::warn!("sign-in window unavailable ({st}); using the browser");
                                             if open::that_detached(&url).is_err() {
                                                 watch.store(true, std::sync::atomic::Ordering::Relaxed);
                                             }
+                                            return;
                                         }
-                                        _ => {
+                                        Ok(Some(_)) | Err(_) => {
                                             std::thread::sleep(std::time::Duration::from_secs(3));
                                             watch.store(true, std::sync::atomic::Ordering::Relaxed);
+                                            return;
                                         }
+                                        Ok(None) => std::thread::sleep(std::time::Duration::from_millis(200)),
                                     }
                                 });
                                 true
@@ -505,6 +518,7 @@ impl MailApp {
                 }
                 SignInMethod::Browser => mailcraft_graph::auth::sign_in_with_browser(&cfg, &|url| open::that_detached(url).is_ok(), cancel),
             };
+            done.store(true, std::sync::atomic::Ordering::Relaxed);
             let result = tokens.and_then(|t| {
                 let mut client = GraphClient::new(cfg, t, store);
                 let me = client.me()?;
