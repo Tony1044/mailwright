@@ -225,6 +225,18 @@ impl GraphClient {
         self.json("GET", "/me/mailboxSettings?$select=timeZone", None, &[])
     }
 
+    /// The mailbox's automatic-replies (out-of-office) setting.
+    pub fn automatic_replies(&self) -> Result<crate::types::AutomaticRepliesSetting, GraphError> {
+        let s: MailboxSettings = self.json("GET", "/me/mailboxSettings?$select=automaticRepliesSetting", None, &[])?;
+        Ok(s.automatic_replies_setting.unwrap_or_default())
+    }
+
+    /// Set the mailbox's automatic-replies setting.
+    pub fn set_automatic_replies(&self, setting: &crate::types::AutomaticRepliesSetting) -> Result<(), GraphError> {
+        let body = serde_json::json!({ "automaticRepliesSetting": setting });
+        self.call("PATCH", "/me/mailboxSettings", Some(&body))
+    }
+
     // ---- folders ---------------------------------------------------------------------------
 
     /// A well-known folder (`inbox`, `drafts`, `sentitems`, `deleteditems`, `junkemail`,
@@ -316,6 +328,12 @@ impl GraphClient {
         let page: Page<Message> =
             self.json("GET", &format!("/me/mailFolders/{folder_id}/messages?$select={MESSAGE_LIST_SELECT}&$orderby=receivedDateTime+desc&$top={}", top.clamp(1, 100)), None, &[])?;
         Ok(page.value)
+    }
+
+    /// A folder's messages, newest first, up to `max` (paged). For filling a folder the person
+    /// opened beyond the offline window, so an archive folder shows its mail as Outlook does.
+    pub fn folder_messages_newest(&self, folder_id: &str, max: usize) -> Result<Vec<Message>, GraphError> {
+        self.all_pages(&format!("/me/mailFolders/{folder_id}/messages?$select={MESSAGE_LIST_SELECT}&$orderby=receivedDateTime+desc&$top=100"), &[], max)
     }
 
     /// One message's list properties.

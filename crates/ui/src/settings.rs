@@ -37,6 +37,14 @@ impl CalendarView {
     }
 }
 
+/// A named signature, as in Outlook.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Signature {
+    pub name: String,
+    pub body: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
@@ -62,8 +70,15 @@ pub struct Settings {
     pub safe_senders: Vec<String>,
     /// How far back mail is kept offline, in days.
     pub offline_days: i64,
+    /// From before named signatures: migrated into `signatures` on load.
     pub signature: String,
     pub signature_on_replies: bool,
+    /// Named signatures the person can pick between when composing.
+    pub signatures: Vec<Signature>,
+    /// The signature added to new messages (a name from `signatures`, or empty for none).
+    pub default_signature: String,
+    /// The signature added to replies and forwards (empty for none).
+    pub reply_signature: String,
     pub compose_font: String,
     pub compose_size: f32,
     pub favorites: Vec<String>,
@@ -105,6 +120,9 @@ impl Default for Settings {
             offline_days: 90,
             signature: String::new(),
             signature_on_replies: true,
+            signatures: Vec::new(),
+            default_signature: String::new(),
+            reply_signature: String::new(),
             compose_font: "Calibri".into(),
             compose_size: 11.0,
             favorites: Vec::new(),
@@ -163,7 +181,20 @@ impl Settings {
         if s.client_id_override.is_empty() && mailwright_graph::config::is_guid(s.last_client_id.trim()) && mailwright_graph::config::BUILTIN_CLIENT_ID.is_none() {
             s.client_id_override = s.last_client_id.trim().to_string();
         }
+        // The old single signature becomes a named one.
+        if s.signatures.is_empty() && !s.signature.trim().is_empty() {
+            s.signatures.push(Signature { name: "My signature".into(), body: s.signature.clone() });
+            s.default_signature = "My signature".into();
+            if s.signature_on_replies {
+                s.reply_signature = "My signature".into();
+            }
+        }
         s
+    }
+
+    /// The body of the signature named `name`, if it exists and isn't empty.
+    pub fn signature_body(&self, name: &str) -> Option<&str> {
+        self.signatures.iter().find(|x| x.name == name).map(|x| x.body.trim_end()).filter(|b| !b.is_empty())
     }
 
     pub fn save(&self, path: &Path) {

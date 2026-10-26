@@ -35,6 +35,24 @@ pub struct User {
 #[serde(default, rename_all = "camelCase")]
 pub struct MailboxSettings {
     pub time_zone: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub automatic_replies_setting: Option<AutomaticRepliesSetting>,
+}
+
+/// Out-of-office / automatic replies, as Graph stores them on the mailbox.
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AutomaticRepliesSetting {
+    /// `disabled`, `alwaysEnabled`, or `scheduled`.
+    pub status: String,
+    /// Who outside the organisation gets a reply: `none`, `contactsOnly`, or `all`.
+    pub external_audience: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scheduled_start_date_time: Option<DateTimeTimeZone>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scheduled_end_date_time: Option<DateTimeTimeZone>,
+    pub internal_reply_message: String,
+    pub external_reply_message: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]

@@ -21,6 +21,14 @@ When new mail reaches your Inbox, Mailwright plays the system's new-mail sound, 
 
 If you use Focused Inbox, unread mail on the tab you're not looking at shows as a count next to the tab's name.
 
+## Signatures
+
+Set up signatures under **File › Options › Signatures**. You can keep several, each with its own name, and choose one to add to new messages and one to add to replies and forwards. While writing a message, the **Signature** button on the ribbon swaps to a different one. (An earlier single signature is kept as "My signature".)
+
+## Automatic Replies
+
+**File › Info › Automatic Replies** sets your out-of-office message on the server, so it works whether or not Mailwright is running. You can turn it on and off, limit it to a time range, and write separate messages for people inside and outside your organisation. Automatic replies need one extra permission, so the first time you may be asked to sign in again and approve it.
+
 ## What Mailwright can do with your account
 
 | Permission | What it's used for |
@@ -30,6 +38,7 @@ If you use Focused Inbox, unread mail on the tab you're not looking at shows as 
 | Send mail as you | Sending mail |
 | Read and write your calendars | Appointments, meetings, and responses |
 | Read your relevant people list | Suggesting names as you type addresses |
+| Read and change your mailbox settings | Automatic replies (out-of-office) |
 | Keep access to data you've given it | Staying signed in |
 
 Mailwright can only ever see and change what you yourself can. It never sees your password: it keeps a sign-in token in the operating system's credential store (Windows Credential Manager; the GNOME keyring or KWallet on Linux).
@@ -51,4 +60,4 @@ Choose **Try Mailwright with a sample mailbox** on the first screen (or start it
 
 ## For administrators
 
-Mailwright signs in with its own multi-tenant app registration (Application ID `6b43e75b-9b99-4d73-8575-390390a86137`), using the authorization code flow with PKCE and a loopback redirect, or the device code flow. It requests only delegated permissions: `User.Read`, `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `People.Read`, `offline_access`, `openid`, `profile`, and `email`. An organisation that would rather use its own registration can enter its Application (client) ID under **Advanced** on the add-account page.
+Mailwright signs in with its own multi-tenant app registration (Application ID `6b43e75b-9b99-4d73-8575-390390a86137`), using the authorization code flow with PKCE and a loopback redirect, or the device code flow. It requests only delegated permissions: `User.Read`, `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `People.Read`, `MailboxSettings.ReadWrite` (for automatic replies), `offline_access`, `openid`, `profile`, and `email`. An organisation that would rather use its own registration can enter its Application (client) ID under **Advanced** on the add-account page.

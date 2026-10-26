@@ -1,7 +1,7 @@
 //! Writing mail: new messages, replies and forwards, each in its own window.
 
 use base64::Engine as _;
-use egui::{Context, Ui, vec2};
+use egui::{Context, Ui, pos2, vec2};
 use mailwright_store::{Action, Addr, Compose, MessageRow, OutAttachment};
 
 use crate::app::MailApp;
@@ -37,6 +37,12 @@ pub struct ComposeWin {
     pub error: Option<String>,
     pub focus: Option<&'static str>,
     pub people_query: String,
+    /// The signature block currently in the body (with its leading newlines), so switching
+    /// signatures can replace it rather than pile them up.
+    pub signature: String,
+    /// Which address line's suggestion list is open, and the highlighted row in it.
+    pub suggest_open: Option<&'static str>,
+    pub suggest_idx: usize,
     /// The local id of the last save, until the server has it.
     pub pending_local: Option<String>,
 }
@@ -144,21 +150,25 @@ impl MailApp {
             error: None,
             focus: Some("to"),
             people_query: String::new(),
+            signature: String::new(),
+            suggest_open: None,
+            suggest_idx: 0,
             pending_local: None,
         }
     }
 
     fn signature_text(&self, reply: bool) -> String {
-        if self.settings.signature.trim().is_empty() || (reply && !self.settings.signature_on_replies) {
-            String::new()
-        } else {
-            format!("\n\n{}", self.settings.signature.trim_end())
+        let name = if reply { &self.settings.reply_signature } else { &self.settings.default_signature };
+        match self.settings.signature_body(name) {
+            Some(body) => format!("\n\n{body}"),
+            None => String::new(),
         }
     }
 
     pub fn new_mail(&mut self) {
         let mut c = self.blank_compose();
         c.body = self.signature_text(false);
+        c.signature = c.body.clone();
         self.composes.push(c);
     }
 
@@ -166,6 +176,7 @@ impl MailApp {
         let mut c = self.blank_compose();
         c.to = format!("{address}; ");
         c.body = self.signature_text(false);
+        c.signature = c.body.clone();
         c.focus = Some("subject");
         self.composes.push(c);
     }
@@ -199,6 +210,7 @@ impl MailApp {
             }
         }
         c.body = self.signature_text(true);
+        c.signature = c.body.clone();
         let original = m.body.clone().unwrap_or_else(|| mailwright_store::text_to_html(&m.preview));
         let quoted = format!("{}{}{}", mailwright_html::head_styles(&original), quote_header(&m), mailwright_html::body_inner(&original));
         c.quoted_doc = Some(mailwright_html::parse(&quoted));
@@ -345,6 +357,8 @@ enum Do {
     Close,
     Discard,
     People(String),
+    /// Put this named signature into the body (replacing the one already there).
+    Signature(String),
 }
 
 pub fn windows(app: &mut MailApp, ctx: &Context) {
@@ -360,6 +374,7 @@ pub fn windows(app: &mut MailApp, ctx: &Context) {
         let builder = egui::ViewportBuilder::default().with_title(title).with_inner_size([860.0, 700.0]).with_min_inner_size([520.0, 360.0]).with_drag_and_drop(true);
         let people = app.people.clone();
         let accounts: Vec<String> = app.sessions.iter().map(|s| s.label().to_string()).collect();
+        let sig_names: Vec<String> = app.settings.signatures.iter().map(|s| s.name.clone()).collect();
         let tokens_dark = Tokens::get(ctx).dark;
         ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(("compose", wid)), builder, |ui, class| {
             let c = &mut app.composes[i];
@@ -385,7 +400,7 @@ pub fn windows(app: &mut MailApp, ctx: &Context) {
             }
             egui::Panel::top("compose_ribbon")
                 .frame(egui::Frame::new().fill(t.ribbon).inner_margin(egui::Margin::symmetric(6, 4)).stroke(egui::Stroke::new(1.0, t.border)))
-                .show(ui, |ui| compose_ribbon(ui, c, &mut todo));
+                .show(ui, |ui| compose_ribbon(ui, c, &sig_names, &mut todo));
             egui::CentralPanel::default().frame(egui::Frame::new().fill(t.reading).inner_margin(egui::Margin::symmetric(12, 10))).show(ui, |ui| {
                 compose_body(ui, c, &t, &people, &accounts, &mut todo);
             });
@@ -454,13 +469,26 @@ pub fn windows(app: &mut MailApp, ctx: &Context) {
                         app.send_to(owner, mailwright_sync::Command::People(q));
                     }
                 }
+                Do::Signature(name) => {
+                    let block = app.settings.signature_body(&name).map(|b| format!("\n\n{b}")).unwrap_or_default();
+                    let c = &mut app.composes[i];
+                    // Drop the signature that's already there (at the end), then add the new one.
+                    if !c.signature.is_empty() {
+                        if let Some(stripped) = c.body.strip_suffix(&c.signature) {
+                            c.body = stripped.to_string();
+                        }
+                    }
+                    c.body.push_str(&block);
+                    c.signature = block;
+                    c.dirty = true;
+                }
             }
         }
         i += 1;
     }
 }
 
-fn compose_ribbon(ui: &mut Ui, c: &mut ComposeWin, todo: &mut Vec<Do>) {
+fn compose_ribbon(ui: &mut Ui, c: &mut ComposeWin, sig_names: &[String], todo: &mut Vec<Do>) {
     ui.horizontal(|ui| {
         widgets::group(ui, "Clipboard", |ui| {
             widgets::stack(ui, |ui| {
@@ -475,6 +503,18 @@ fn compose_ribbon(ui: &mut Ui, c: &mut ComposeWin, todo: &mut Vec<Do>) {
         widgets::group(ui, "Include", |ui| {
             if widgets::big(ui, "attach", "Attach\nFile", true, false, false).on_hover_text("Attach a file (or drop files on this window)").clicked() {
                 todo.push(Do::Attach);
+            }
+            if !sig_names.is_empty() {
+                let r = widgets::big(ui, "rename", "Signature", true, false, true);
+                egui::Popup::menu(&r).show(|ui| {
+                    ui.set_min_width(180.0);
+                    for name in sig_names {
+                        if ui.button(name).clicked() {
+                            todo.push(Do::Signature(name.clone()));
+                            ui.close();
+                        }
+                    }
+                });
             }
         });
         widgets::group(ui, "Tags", |ui| {
@@ -654,29 +694,72 @@ fn address_line(ui: &mut Ui, c: &mut ComposeWin, label: &str, key: &'static str,
         }
         // Completion: the part after the last separator.
         let typed = text.rsplit([';', ',']).next().unwrap_or("").trim().to_string();
-        if resp.has_focus() && typed.chars().count() >= 2 && !typed.contains('<') {
-            if c.people_query != typed {
+        // The list stays up while the box has focus, and while the pointer is on the list itself
+        // (clicking a row moves focus off the box for a moment, which used to make it vanish).
+        let active = resp.has_focus() || c.suggest_open == Some(key);
+        if active && typed.chars().count() >= 2 && !typed.contains('<') {
+            if resp.has_focus() && c.people_query != typed {
                 c.people_query = typed.clone();
                 todo.push(Do::People(typed.clone()));
             }
             let lower = typed.to_lowercase();
-            let matches: Vec<&Addr> = people.1.iter().filter(|a| a.name.to_lowercase().contains(&lower) || a.address.to_lowercase().contains(&lower)).take(8).collect();
-            if !matches.is_empty() {
+            let matches: Vec<Addr> = people.1.iter().filter(|a| a.name.to_lowercase().contains(&lower) || a.address.to_lowercase().contains(&lower)).take(8).cloned().collect();
+            if matches.is_empty() {
+                if c.suggest_open == Some(key) {
+                    c.suggest_open = None;
+                }
+            } else {
+                if c.suggest_open != Some(key) {
+                    c.suggest_idx = 0;
+                }
                 let mut pick = None;
-                egui::Area::new(id.with("suggest")).order(egui::Order::Foreground).fixed_pos(resp.rect.left_bottom() + vec2(0.0, 2.0)).show(ui.ctx(), |ui| {
-                    egui::Frame::popup(ui.style()).show(ui, |ui| {
-                        ui.set_min_width(resp.rect.width().min(420.0));
-                        for a in matches {
-                            let r = ui.add(egui::Button::new(egui::RichText::new(a.full()).font(regular(12.5))).frame(false).min_size(vec2(ui.available_width(), 24.0)));
-                            if r.clicked() {
-                                pick = Some(a.clone());
-                            }
+                // Keyboard: Up/Down to move, Enter or Tab to accept, Escape to close.
+                if resp.has_focus() {
+                    let (down, up, enter, tab, esc) =
+                        ui.input(|i| (i.key_pressed(egui::Key::ArrowDown), i.key_pressed(egui::Key::ArrowUp), i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Tab), i.key_pressed(egui::Key::Escape)));
+                    if esc {
+                        c.suggest_open = None;
+                    } else {
+                        if down {
+                            c.suggest_idx = (c.suggest_idx + 1).min(matches.len() - 1);
                         }
+                        if up {
+                            c.suggest_idx = c.suggest_idx.saturating_sub(1);
+                        }
+                        if enter || tab {
+                            pick = matches.get(c.suggest_idx).cloned();
+                        }
+                    }
+                }
+                if c.suggest_open != Some(key) && !matches!(c.suggest_open, None) {
+                    c.suggest_idx = 0;
+                }
+                c.suggest_idx = c.suggest_idx.min(matches.len() - 1);
+                let still = c.suggest_open != Some(key) || pick.is_none();
+                let mut hovered = false;
+                if still {
+                    let area = egui::Area::new(id.with("suggest")).order(egui::Order::Foreground).fixed_pos(resp.rect.left_bottom() + vec2(0.0, 2.0)).show(ui.ctx(), |ui| {
+                        egui::Frame::popup(ui.style()).inner_margin(egui::Margin::same(2)).show(ui, |ui| {
+                            ui.set_min_width(resp.rect.width().min(460.0));
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            for (i, a) in matches.iter().enumerate() {
+                                let selected = i == c.suggest_idx;
+                                let r = ui.add(suggestion_row(a, selected, t));
+                                if r.hovered() {
+                                    c.suggest_idx = i;
+                                }
+                                if r.clicked() {
+                                    pick = Some(a.clone());
+                                }
+                            }
+                        });
                     });
-                });
-                let enter = ui.input(|i| i.key_pressed(egui::Key::Tab));
-                if pick.is_none() && enter {
-                    pick = people.1.iter().find(|a| a.name.to_lowercase().contains(&lower) || a.address.to_lowercase().contains(&lower)).cloned();
+                    hovered = ui.rect_contains_pointer(area.response.rect) || area.response.hovered();
+                }
+                c.suggest_open = Some(key);
+                // Close once the box has lost focus and the pointer isn't on the list.
+                if !resp.has_focus() && !hovered && pick.is_none() {
+                    c.suggest_open = None;
                 }
                 if let Some(a) = pick {
                     let cut = text.rfind([';', ',']).map(|p| p + 1).unwrap_or(0);
@@ -688,6 +771,8 @@ fn address_line(ui: &mut Ui, c: &mut ComposeWin, label: &str, key: &'static str,
                     text.push_str("; ");
                     c.dirty = true;
                     c.people_query.clear();
+                    c.suggest_open = None;
+                    c.suggest_idx = 0;
                     resp.request_focus();
                     if let Some(mut st) = egui::TextEdit::load_state(ui.ctx(), id) {
                         let end = text.chars().count();
@@ -696,8 +781,35 @@ fn address_line(ui: &mut Ui, c: &mut ComposeWin, label: &str, key: &'static str,
                     }
                 }
             }
+        } else if c.suggest_open == Some(key) {
+            c.suggest_open = None;
         }
     });
+}
+
+/// One row in the address suggestion list: the name in bold over the address, highlighted when
+/// it's the one Enter would pick.
+fn suggestion_row<'a>(a: &'a Addr, selected: bool, t: &'a Tokens) -> impl egui::Widget + 'a {
+    move |ui: &mut Ui| {
+        let two_line = !a.name.is_empty();
+        let h = if two_line { 38.0 } else { 24.0 };
+        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width().max(260.0), h), egui::Sense::click());
+        if selected {
+            ui.painter().rect_filled(rect, 4.0, t.selected);
+        } else if resp.hovered() {
+            ui.painter().rect_filled(rect, 4.0, t.hover);
+        }
+        let p = ui.painter();
+        let x = rect.min.x + 8.0;
+        if two_line {
+            p.text(pos2(x, rect.min.y + 11.0), egui::Align2::LEFT_CENTER, &a.name, semibold(12.5), t.text);
+            p.text(pos2(x, rect.min.y + 27.0), egui::Align2::LEFT_CENTER, &a.address, regular(11.5), t.text_dim);
+        } else {
+            p.text(pos2(x, rect.center().y), egui::Align2::LEFT_CENTER, &a.address, regular(12.5), t.text);
+        }
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, a.full()));
+        resp
+    }
 }
 
 #[cfg(test)]

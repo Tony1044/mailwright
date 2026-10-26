@@ -1,11 +1,18 @@
-# Mailwright 0.2.2 binaries
+# Mailwright 0.3.0 binaries
 
 | File | For |
 | --- | --- |
 | `mailwright.exe` | Windows 10 and 11 (64-bit). A single file: no installer, no extra DLLs. |
-| `mailwright_0.2.2-1_amd64.deb` | Ubuntu 24.04 or later (64-bit). Install with `sudo apt install ./mailwright_0.2.2-1_amd64.deb` (it replaces MailCraft if that's installed). |
+| `mailwright_0.3.0-1_amd64.deb` | Ubuntu 24.04 or later (64-bit). Install with `sudo apt install ./mailwright_0.3.0-1_amd64.deb` (it replaces MailCraft if that's installed). |
 
-## What's new in 0.2.2
+## What's new in 0.3.0
+
+- Address suggestions when composing can now be clicked, and you can move through them with the arrow keys and accept with Enter or Tab.
+- Signatures: keep several named signatures (**File › Options › Signatures**), choose one for new messages and one for replies and forwards, and switch signature in a message from the **Signature** button. An earlier single signature is kept as "My signature".
+- Automatic Replies (out-of-office): **File › Info › Automatic Replies**, with an optional time range and separate messages for inside and outside your organisation. This needs one extra permission, so the first time you may be asked to sign in again.
+- Opening an older folder now shows its mail even when it's beyond the "keep mail offline" window, so archive folders look right rather than near-empty.
+
+## In 0.2.2
 
 - Fixed: reading a message could blank its subject, sender, and date, so it dropped out of view (Outlook.com sends only what changed, such as the read state, and Mailwright saved that over the whole message). Updates now change only what they carry, and messages stay in the folder they were synced from.
 - Repair: on first start, copies an earlier version damaged are removed and the folders sync again from scratch, so everything comes back.

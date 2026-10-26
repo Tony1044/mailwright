@@ -79,6 +79,7 @@ fn info(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
         .clone();
     let mut remove = None;
     let mut reauth = None;
+    let mut auto_reply = None;
     for (i, s) in app.sessions.iter().enumerate() {
         egui::Frame::new().stroke(egui::Stroke::new(1.0, t.border)).corner_radius(8.0).inner_margin(egui::Margin::same(16)).show(ui, |ui| {
             ui.set_width(ui.available_width().min(760.0));
@@ -126,12 +127,19 @@ fn info(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
                 if s.needs_sign_in.is_some() && widgets::icon_text(ui, "lock", "Sign in again", true).clicked() {
                     reauth = Some(i);
                 }
+                if !s.demo && s.needs_sign_in.is_none() && widgets::icon_text(ui, "clock", "Automatic Replies", true).clicked() {
+                    auto_reply = Some(i);
+                }
                 if widgets::icon_text(ui, "sign_out", "Remove Account", true).clicked() {
                     remove = Some(s.label().to_string());
                 }
             });
         });
         ui.add_space(12.0);
+    }
+    if let Some(i) = auto_reply {
+        app.backstage = None;
+        app.open_auto_reply(i);
     }
     if let Some(i) = reauth {
         app.backstage = None;
@@ -142,6 +150,113 @@ fn info(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
         app.backstage = None;
     }
     ui.label(egui::RichText::new("Removing an account deletes this computer's copy of its mail and its saved sign-in. Nothing changes on the server.").color(t.text_dim).font(regular(12.0)));
+}
+
+fn signatures(ui: &mut Ui, d: &mut crate::settings::Settings, t: &Tokens) {
+    use crate::settings::Signature;
+    ui.label(egui::RichText::new("Signatures").font(semibold(13.0)));
+    ui.add_space(4.0);
+    let sel_id = egui::Id::new("sig_sel");
+    let mut sel: usize = ui.data(|dd| dd.get_temp(sel_id)).unwrap_or(0);
+    sel = sel.min(d.signatures.len().saturating_sub(1));
+    // The name being edited, if the rename box is open.
+    let rename_id = egui::Id::new("sig_rename");
+    ui.horizontal(|ui| {
+        let current = d.signatures.get(sel).map(|s| s.name.clone()).unwrap_or_else(|| "(none)".into());
+        egui::ComboBox::from_id_salt("sig_pick").selected_text(current).width(220.0).show_ui(ui, |ui| {
+            for (i, s) in d.signatures.iter().enumerate() {
+                if ui.selectable_label(i == sel, &s.name).clicked() {
+                    sel = i;
+                    ui.data_mut(|dd| dd.remove::<String>(rename_id));
+                }
+            }
+        });
+        if ui.button("New").clicked() {
+            let base = "Signature";
+            let mut n = 1;
+            let mut name = base.to_string();
+            while d.signatures.iter().any(|s| s.name == name) {
+                n += 1;
+                name = format!("{base} {n}");
+            }
+            d.signatures.push(Signature { name, body: String::new() });
+            sel = d.signatures.len() - 1;
+        }
+        if !d.signatures.is_empty() {
+            if ui.button("Rename").clicked() {
+                let cur = d.signatures[sel].name.clone();
+                ui.data_mut(|dd| dd.insert_temp(rename_id, cur));
+            }
+            if ui.button("Delete").clicked() {
+                let removed = d.signatures.remove(sel);
+                if d.default_signature == removed.name {
+                    d.default_signature.clear();
+                }
+                if d.reply_signature == removed.name {
+                    d.reply_signature.clear();
+                }
+                sel = sel.min(d.signatures.len().saturating_sub(1));
+            }
+        }
+    });
+    // Rename box.
+    if let Some(mut editing) = ui.data(|dd| dd.get_temp::<String>(rename_id)) {
+        if sel < d.signatures.len() {
+            ui.horizontal(|ui| {
+                ui.label("Name");
+                let r = ui.add(egui::TextEdit::singleline(&mut editing).desired_width(220.0));
+                ui.data_mut(|dd| dd.insert_temp(rename_id, editing.clone()));
+                let trimmed = editing.trim().to_string();
+                let clash = d.signatures.iter().enumerate().any(|(i, s)| i != sel && s.name == trimmed);
+                let ok = !trimmed.is_empty() && !clash;
+                if ui.add_enabled(ok, egui::Button::new("OK")).clicked() || (ok && r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+                    let old = d.signatures[sel].name.clone();
+                    d.signatures[sel].name = trimmed.clone();
+                    if d.default_signature == old {
+                        d.default_signature = trimmed.clone();
+                    }
+                    if d.reply_signature == old {
+                        d.reply_signature = trimmed;
+                    }
+                    ui.data_mut(|dd| dd.remove::<String>(rename_id));
+                }
+                if clash {
+                    ui.label(egui::RichText::new("name already used").color(t.high).font(regular(11.5)));
+                }
+            });
+        }
+    }
+    // The editor for the selected signature.
+    if let Some(s) = d.signatures.get_mut(sel) {
+        ui.add(egui::TextEdit::multiline(&mut s.body).desired_rows(4).desired_width(520.0).hint_text("Your name\nJob title | Organisation"));
+    } else {
+        ui.label(egui::RichText::new("No signatures yet. Select New to add one.").color(t.text_dim).font(regular(12.0)));
+    }
+    ui.add_space(6.0);
+    // Which signature is used where.
+    let names: Vec<String> = d.signatures.iter().map(|s| s.name.clone()).collect();
+    egui::Grid::new("sig_defaults").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
+        default_combo(ui, "New messages", "sig_new", &mut d.default_signature, &names);
+        ui.end_row();
+        default_combo(ui, "Replies and forwards", "sig_reply", &mut d.reply_signature, &names);
+        ui.end_row();
+    });
+    ui.data_mut(|dd| dd.insert_temp(sel_id, sel));
+}
+
+fn default_combo(ui: &mut Ui, label: &str, salt: &str, value: &mut String, names: &[String]) {
+    ui.label(label);
+    let shown = if value.is_empty() || !names.iter().any(|n| n == value) { "(none)".to_string() } else { value.clone() };
+    egui::ComboBox::from_id_salt(salt).selected_text(shown).width(220.0).show_ui(ui, |ui| {
+        if ui.selectable_label(value.is_empty(), "(none)").clicked() {
+            value.clear();
+        }
+        for n in names {
+            if ui.selectable_label(value == n, n).clicked() {
+                *value = n.clone();
+            }
+        }
+    });
 }
 
 fn section(ui: &mut Ui, title: &str, t: &Tokens) {
@@ -224,9 +339,8 @@ fn options(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
         ui.add(egui::TextEdit::singleline(&mut d.compose_font).desired_width(160.0));
         ui.add(egui::DragValue::new(&mut d.compose_size).range(8.0..=24.0).suffix(" pt"));
     });
-    ui.label("Signature");
-    ui.add(egui::TextEdit::multiline(&mut d.signature).desired_rows(4).desired_width(520.0).hint_text("Your name\nJob title | Organisation"));
-    ui.checkbox(&mut d.signature_on_replies, "Add the signature to replies and forwards");
+    ui.add_space(10.0);
+    signatures(ui, &mut d, t);
     ui.add_space(12.0);
     section(ui, "Calendar", t);
     ui.horizontal(|ui| {

@@ -36,6 +36,7 @@ pub const SCOPES: &[&str] = &[
     "Mail.Send",
     "Calendars.ReadWrite",
     "People.Read",
+    "MailboxSettings.ReadWrite",
 ];
 
 /// One mailbox: which app registration and tenant to sign in with.

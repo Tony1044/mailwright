@@ -391,3 +391,37 @@ fn mail_an_earlier_version_hid_is_repaired_on_start() {
     assert!(after.iter().any(|x| x.id == hidden), "back in the Inbox");
     assert_eq!(after.len(), before.len());
 }
+
+#[test]
+fn opening_an_old_folder_fills_it_past_the_offline_window() {
+    let rig = Rig::new("oldfolder");
+    let s = rig.store();
+    // A message much older than the 90-day offline window, in a subfolder.
+    let old = {
+        let mut st = rig.mock.state();
+        let props = serde_json::Map::from_iter([
+            ("subject".to_string(), serde_json::json!("Archived two years ago")),
+            ("from".to_string(), serde_json::json!({"emailAddress": {"name": "Ada", "address": "ada@harbourview.example"}})),
+            ("receivedDateTime".to_string(), serde_json::json!((chrono::Utc::now() - chrono::Duration::days(730)).format("%Y-%m-%dT%H:%M:%SZ").to_string())),
+            ("isRead".to_string(), serde_json::json!(true)),
+        ]);
+        st.deliver("AAMkProjects", props, "<p>Old business.</p>", vec![])
+    };
+    // Opening the folder brings it in, even though it's outside the window.
+    rig.sync.send(Command::SyncFolder("AAMkProjects".into()));
+    assert!(pump_store(&s, &old, 10_000), "the old message is now cached");
+    let got = s.message(&old).unwrap().unwrap();
+    assert_eq!(got.folder_id, "AAMkProjects");
+    assert_eq!(got.subject, "Archived two years ago");
+}
+
+fn pump_store(s: &Store, id: &str, ms: u64) -> bool {
+    let end = Instant::now() + Duration::from_millis(ms);
+    while Instant::now() < end {
+        if s.message(id).ok().flatten().is_some() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    false
+}

@@ -138,6 +138,36 @@ fn run(h: &mut egui_kittest::Harness<'static, MailApp>, cmd: &str) {
             }
             step(h, 3);
         }
+        "seed-sig" => {
+            h.state_mut().settings.signatures = vec![
+                mailwright_ui::settings::Signature { name: "Work".into(), body: "Tony Johncock\nPrincipal Enterprise Architect".into() },
+                mailwright_ui::settings::Signature { name: "Personal".into(), body: "Tony".into() },
+            ];
+            h.state_mut().settings.default_signature = "Work".into();
+            h.state_mut().settings.reply_signature = "Work".into();
+            step(h, 3);
+        }
+        "auto-reply" => {
+            h.state_mut().open_auto_reply(0);
+            wait(h, 4000, |a| a.auto_reply.as_ref().is_some_and(|x| !x.loading));
+            step(h, 3);
+        }
+        "suggest" => {
+            h.state_mut().new_mail();
+            step(h, 4);
+            if let Some(c) = h.state_mut().composes.first_mut() {
+                c.to = "ad".into();
+                c.focus = Some("to");
+            }
+            h.state_mut().people = (
+                "ad".into(),
+                vec![
+                    mailwright_store::Addr::new("Ada Lindqvist", "ada@harbourview.example"),
+                    mailwright_store::Addr::new("Adam Price", "adam.price@northgate.example"),
+                ],
+            );
+            step(h, 8);
+        }
         "wait" => wait(h, arg.parse().unwrap_or(500), |_| false),
         other => eprintln!("unknown step {other}"),
     }

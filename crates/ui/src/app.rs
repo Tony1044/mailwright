@@ -199,6 +199,8 @@ pub struct MailApp {
     clicked_rx: Receiver<crate::notify::Clicked>,
     /// Where sign-ins are kept (asking the keyring is slow, so it's asked once).
     pub keyring_location: Option<String>,
+    /// The Automatic Replies dialog, while it's open.
+    pub auto_reply: Option<crate::autoreply::AutoReplyUi>,
 }
 
 /// Mailwright draws its own Desktop Alert (Windows; elsewhere with MAILWRIGHT_OWN_ALERT set).
@@ -261,6 +263,7 @@ impl MailApp {
             clicked_tx,
             clicked_rx,
             keyring_location: None,
+            auto_reply: None,
         }
     }
 
@@ -956,6 +959,24 @@ impl MailApp {
             Update::Sent(subject) => self.status = format!("Sent \u{201c}{subject}\u{201d}"),
             Update::NewMail(items) => self.mail_arrived(ctx, i, items),
             Update::DraftSaved { local_id, draft_id } => self.draft_saved(&local_id, &draft_id),
+            Update::AutoReply(setting) => {
+                if let Some(a) = self.auto_reply.as_mut().filter(|a| a.account == i) {
+                    if a.saving {
+                        // A save just came back: confirm and close.
+                        self.status = "Automatic replies updated".into();
+                        self.auto_reply = None;
+                    } else {
+                        a.apply(&setting);
+                    }
+                }
+            }
+            Update::AutoReplyError(m) => {
+                if let Some(a) = self.auto_reply.as_mut().filter(|a| a.account == i) {
+                    a.loading = false;
+                    a.saving = false;
+                    a.error = Some(m);
+                }
+            }
             Update::Error(e) => {
                 let e = if self.sessions.len() > 1 { format!("{}: {e}", self.sessions[i].label()) } else { e };
                 if !self.errors.contains(&e) {
@@ -1468,9 +1489,16 @@ impl MailApp {
         }
     }
 
+    /// Open the Automatic Replies dialog for account `i` and ask the server for its current state.
+    pub fn open_auto_reply(&mut self, i: usize) {
+        self.auto_reply = Some(crate::autoreply::AutoReplyUi::loading(i));
+        self.send_to(i, mailwright_sync::Command::GetAutoReply);
+    }
+
     /// Compose and appointment windows, and dialogs.
     fn windows(&mut self, ctx: &Context) {
         crate::alert::show(self, ctx);
+        crate::autoreply::dialog(self, ctx);
         crate::compose::windows(self, ctx);
         crate::reading::reader_windows(self, ctx);
         crate::event::windows(self, ctx);

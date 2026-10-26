@@ -49,6 +49,10 @@ pub enum Command {
     WorkOffline(bool),
     /// How far back to keep mail in the cache, in days.
     SetWindow(i64),
+    /// Fetch the mailbox's automatic-replies (out-of-office) setting.
+    GetAutoReply,
+    /// Save the mailbox's automatic-replies setting.
+    SetAutoReply(Box<mailwright_graph::types::AutomaticRepliesSetting>),
     SignOut,
     Shutdown,
 }
@@ -73,6 +77,10 @@ pub enum Update {
     NewMail(Vec<NewMail>),
     /// A draft reached the server: the compose window with this local id now edits that draft.
     DraftSaved { local_id: String, draft_id: String },
+    /// The mailbox's automatic-replies setting (after a Get or a successful Set).
+    AutoReply(Box<mailwright_graph::types::AutomaticRepliesSetting>),
+    /// Automatic replies couldn't be reached (e.g. the extra permission isn't granted yet).
+    AutoReplyError(String),
     /// Something went wrong that the user should see.
     Error(String),
     SignInRequired(String),
@@ -91,6 +99,10 @@ pub struct NewMail {
 
 /// After this many failed tries a queued change is given up on, so it can't hold up the rest.
 const MAX_ATTEMPTS: i64 = 8;
+
+/// The most messages to pull when a folder is first opened (newest first). Enough that even a
+/// large archive folder looks complete, without downloading tens of thousands at once.
+const MAX_FOLDER_FILL: usize = 2000;
 
 pub struct SyncHandle {
     tx: Sender<Command>,
@@ -159,6 +171,17 @@ fn iso(t: i64) -> String {
 }
 
 /// What to tell the user about an error.
+/// Automatic replies need one permission the first sign-in may not have granted. A 403 almost
+/// always means just that, so point the person at signing in again rather than at an error code.
+pub fn describe_auto_reply(e: &GraphError) -> String {
+    match e {
+        GraphError::Api { status: 403, .. } | GraphError::SignInRequired(_) => {
+            "Mailwright needs your permission to read and change automatic replies. Sign out of this account and sign in again, and approve the request.".into()
+        }
+        other => describe(other),
+    }
+}
+
 pub fn describe(e: &GraphError) -> String {
     match e {
         GraphError::Network { host, .. } => format!("Can't reach {host}. Working offline."),
@@ -438,6 +461,35 @@ impl Engine {
                 }
             }
             Command::SetWindow(days) => self.window_days = days.clamp(7, 3650),
+            Command::GetAutoReply => {
+                if let Some(c) = self.client.clone().filter(|_| !self.offline) {
+                    match c.automatic_replies() {
+                        Ok(s) => self.emit(Update::AutoReply(Box::new(s))),
+                        Err(e) => {
+                            log::warn!("reading automatic replies: {e}");
+                            self.emit(Update::AutoReplyError(describe_auto_reply(&e)));
+                        }
+                    }
+                } else {
+                    self.emit(Update::AutoReplyError("You're offline, so automatic replies can't be checked.".into()));
+                }
+            }
+            Command::SetAutoReply(setting) => {
+                if let Some(c) = self.client.clone().filter(|_| !self.offline) {
+                    match c.set_automatic_replies(&setting) {
+                        Ok(()) => match c.automatic_replies() {
+                            Ok(s) => self.emit(Update::AutoReply(Box::new(s))),
+                            Err(_) => self.emit(Update::AutoReply(setting)),
+                        },
+                        Err(e) => {
+                            log::warn!("saving automatic replies: {e}");
+                            self.emit(Update::AutoReplyError(describe_auto_reply(&e)));
+                        }
+                    }
+                } else {
+                    self.emit(Update::AutoReplyError("You're offline, so automatic replies can't be changed.".into()));
+                }
+            }
             Command::SignOut => {
                 if let Some(c) = self.client.take() {
                     let _ = c.sign_out();
@@ -574,6 +626,11 @@ impl Engine {
         let Some(c) = self.client.clone() else { return false };
         let saved = self.store.delta_link(folder).ok().flatten();
         let first = saved.is_none();
+        // First time a folder is synced, fill it newest-first ignoring the offline window, so an
+        // archive folder shows its mail as Outlook does rather than just the last few months.
+        if first && !self.fill_folder(&c, folder) {
+            return false;
+        }
         let since = iso(chrono::Utc::now().timestamp() - self.window_days * 86_400);
         let mut link = saved.clone();
         let mut changed = 0usize;
@@ -665,6 +722,25 @@ impl Engine {
             self.emit(Update::FoldersChanged);
         }
         true
+    }
+
+    /// Fill a folder with its newest messages, ignoring the offline window, up to a generous cap.
+    /// False only when the connection failed (so the round should stop).
+    fn fill_folder(&mut self, c: &GraphClient, folder: &str) -> bool {
+        match c.folder_messages_newest(folder, MAX_FOLDER_FILL) {
+            Ok(list) => {
+                if !list.is_empty() {
+                    log::info!("{folder}: initial fill of {} message(s)", list.len());
+                    if let Err(e) = self.store.upsert_messages(folder, &list) {
+                        log::error!("saving mail in {folder}: {e}");
+                    } else {
+                        self.emit(Update::MessagesChanged);
+                    }
+                }
+                true
+            }
+            Err(e) => self.trouble(&e),
+        }
     }
 
     /// Save messages listed in `folder`; partial ones not stored yet are fetched whole first.

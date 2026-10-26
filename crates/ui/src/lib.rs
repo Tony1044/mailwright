@@ -10,6 +10,7 @@
 pub mod alert;
 pub mod app;
 pub mod app_icon;
+pub mod autoreply;
 mod backstage;
 pub mod calendar;
 mod chrome;
