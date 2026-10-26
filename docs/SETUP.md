@@ -17,7 +17,7 @@ Some organisations don't let people approve apps themselves. You'll see *Need ad
 
 ## New mail
 
-When new mail reaches your Inbox, Mailwright plays the system's new-mail sound, shows a desktop alert with the sender and subject, and puts an amber envelope on its taskbar icon until you look at your Inbox. On Linux, docks that show counts (Ubuntu Dock, Dash to Dock, KDE) also show how many unread messages are waiting; clicking an alert opens the message. Turn any of these off under **File › Options › When new messages arrive**.
+When new mail reaches your Inbox, Mailwright plays the system's new-mail sound, shows a Desktop Alert with the sender, subject, and the start of the message, and puts an amber envelope on its taskbar button until you've read the new mail. Clicking an alert opens the message. On Windows the alert is Mailwright's own, in the bottom-right corner, as in classic Outlook; on Linux it's the desktop's notification, and docks that show counts (Ubuntu Dock, Dash to Dock, KDE) also show how many unread messages are waiting. Turn any of these off under **File › Options › When new messages arrive**, where **Test** shows what an alert looks and sounds like.
 
 If you use Focused Inbox, unread mail on the tab you're not looking at shows as a count next to the tab's name.
 

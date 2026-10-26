@@ -1,5 +1,6 @@
-//! New-mail alerts, as Outlook gives them: a sound, a desktop alert, and an envelope on the
-//! taskbar icon until the new mail has been seen. Everything here runs off the interface thread.
+//! New-mail alerts: the sound, and (on Linux) the desktop's own notification and dock count.
+//! Windows gets Mailwright's own Desktop Alert window instead (see `alert`). Everything here runs
+//! off the interface thread.
 
 use std::path::PathBuf;
 use std::sync::mpsc::{Sender, channel};
@@ -8,8 +9,6 @@ use mailwright_sync::NewMail;
 
 /// The app's name as notifications show it.
 pub const APP_NAME: &str = "Mailwright";
-/// Windows: the AppUserModelID toasts are sent under (registered at start-up).
-pub const APP_ID: &str = "Mailwright.Mail";
 /// Linux: the desktop file's name (without `.desktop`), which is also the icon's name.
 pub const DESKTOP_ID: &str = "ai.storyteller.mailwright";
 
@@ -53,8 +52,7 @@ pub fn announce(alert: Alert, clicked: Option<Sender<Clicked>>, wake: impl Fn() 
         return;
     }
     let spawned = std::thread::Builder::new().name("new-mail-alert".into()).spawn(move || {
-        if alert.sound && !(alert.popup && cfg!(windows)) {
-            // On Windows the toast plays the sound itself (the system's "New Mail Notification").
+        if alert.sound {
             play_sound();
         }
         if alert.popup {
@@ -103,33 +101,8 @@ fn escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
-#[cfg(target_os = "windows")]
-fn popup(alert: &Alert, _clicked: Option<Sender<Clicked>>, _wake: impl Fn()) {
-    use notify_rust::Notification;
-    let (title, body) = text(alert);
-    let mut n = Notification::new();
-    n.summary(&title).body(&body).app_id(APP_ID);
-    if alert.sound {
-        n.sound_name("Mail");
-    }
-    if let Err(e) = n.show() {
-        // Not registered yet, or toasts turned off for it: try under PowerShell's identity.
-        log::warn!("toast as {APP_ID}: {e}");
-        let mut n = Notification::new();
-        n.summary(&title).body(&body);
-        if alert.sound {
-            n.sound_name("Mail");
-        }
-        if let Err(e) = n.show() {
-            log::warn!("toast: {e}");
-            if alert.sound {
-                play_sound();
-            }
-        }
-    }
-}
-
-#[cfg(not(any(target_os = "windows", all(unix, not(target_os = "macos")))))]
+/// Elsewhere (Windows), Mailwright shows its own Desktop Alert window instead.
+#[cfg(not(all(unix, not(target_os = "macos"))))]
 fn popup(_alert: &Alert, _clicked: Option<Sender<Clicked>>, _wake: impl Fn()) {}
 
 /// The new-mail sound: the system's own where there is one.
@@ -162,17 +135,15 @@ pub fn play_sound() {
 
 #[cfg(target_os = "windows")]
 pub fn play_sound() {
-    use std::os::windows::process::CommandExt as _;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    // The sound Windows (and Outlook) use for new mail, unless it has been removed.
     let windir = std::env::var_os("SystemRoot").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
     let system = windir.join("Media").join("Windows Notify Email.wav");
     let file = if system.exists() { Some(system) } else { chime_file() };
-    let Some(file) = file else { return };
-    let script = format!("(New-Object Media.SoundPlayer '{}').PlaySync()", file.display().to_string().replace('\'', "''"));
-    let _ = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .creation_flags(CREATE_NO_WINDOW)
-        .status();
+    match file {
+        Some(f) if mailwright_winshell::play_wav(&f) => {}
+        Some(f) => log::warn!("couldn't play {}", f.display()),
+        None => {}
+    }
 }
 
 #[cfg(not(any(target_os = "windows", all(unix, not(target_os = "macos")))))]

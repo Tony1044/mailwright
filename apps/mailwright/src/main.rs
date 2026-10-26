@@ -16,7 +16,17 @@ struct App(MailApp, std::time::Instant);
 const MAX_FPS: u64 = 60;
 
 impl eframe::App for App {
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        #[cfg(target_os = "windows")]
+        if self.0.native_window == 0 {
+            use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
+            if let Ok(h) = frame.window_handle()
+                && let RawWindowHandle::Win32(w) = h.as_raw()
+            {
+                self.0.native_window = w.hwnd.get();
+            }
+        }
+        let _ = &frame;
         if cfg!(all(unix, not(target_os = "macos"))) {
             let frame = std::time::Duration::from_millis(1000 / MAX_FPS);
             let since = self.1.elapsed();
@@ -70,28 +80,6 @@ fn sign_in_window(_data: &std::path::Path) -> Option<mailwright_ui::app::SignInW
     None
 }
 
-/// Windows: register the identity new-mail alerts are shown under (name and icon), for this
-/// user only. Windows needs this for an app without an installer to show its own name on alerts.
-#[cfg(target_os = "windows")]
-fn register_alert_identity(data: std::path::PathBuf) {
-    use std::os::windows::process::CommandExt as _;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    std::thread::spawn(move || {
-        let icon = data.join("mailwright-icon.png");
-        let _ = std::fs::create_dir_all(&data);
-        if std::fs::write(&icon, mailwright_ui::app_icon::png(64)).is_err() {
-            return;
-        }
-        let key = format!(r"HKCU\Software\Classes\AppUserModelId\{}", mailwright_ui::notify::APP_ID);
-        for (name, value) in [("DisplayName", mailwright_ui::notify::APP_NAME.to_string()), ("IconUri", icon.display().to_string())] {
-            let r = std::process::Command::new("reg").args(["add", &key, "/v", name, "/t", "REG_SZ", "/d", &value, "/f"]).creation_flags(CREATE_NO_WINDOW).output();
-            if let Err(e) = r {
-                log::warn!("registering alerts: {e}");
-            }
-        }
-    });
-}
-
 fn main() -> eframe::Result {
     mailwright_ui::settings::migrate_old_folders();
     let config = mailwright_ui::settings::config_dir();
@@ -110,8 +98,6 @@ fn main() -> eframe::Result {
     }
     logging::init(&data);
     log::info!("Mailwright {} starting", env!("CARGO_PKG_VERSION"));
-    #[cfg(target_os = "windows")]
-    register_alert_identity(data.clone());
     let settings_path = config.join("settings.json");
     let settings = Settings::load(&settings_path);
     let demo = std::env::args().any(|a| a == "--sample-mailbox");
@@ -151,6 +137,10 @@ fn main() -> eframe::Result {
                 app.start_demo();
             } else {
                 app.resume();
+            }
+            // For checking how alerts look: MAILWRIGHT_TEST_ALERT=1.
+            if std::env::var_os("MAILWRIGHT_TEST_ALERT").is_some() {
+                app.test_alert(true, false);
             }
             if let Some(to) = mailto.filter(|t| !t.is_empty())
                 && !app.sessions.is_empty() {

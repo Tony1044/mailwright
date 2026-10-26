@@ -1,0 +1,25 @@
+[package]
+name = "mailwright-winshell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The few Windows shell calls Mailwright needs that have no safe Rust wrapper: the taskbar overlay icon, the new-mail sound, and registering the alert identity"
+
+# Not the workspace lints: this is the one crate allowed `unsafe`, and only for these Win32 calls.
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+
+[dependencies]
+log = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Com",
+    "Win32_System_Registry",
+    "Win32_Media_Audio",
+] }

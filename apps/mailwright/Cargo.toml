@@ -18,6 +18,7 @@ dirs = { workspace = true }
 chrono = { workspace = true }
 pollster = "0.4"
 open = { workspace = true }
+raw-window-handle = "0.6"
 
 # Linux: Mailwright's own sign-in window (WebKitGTK), run as a separate process so the web view and
 # its event loop never share the main window's. Windows uses an Edge app window instead, which

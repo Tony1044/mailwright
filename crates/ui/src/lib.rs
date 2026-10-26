@@ -7,6 +7,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![allow(clippy::collapsible_if)]
 
+pub mod alert;
 pub mod app;
 pub mod app_icon;
 mod backstage;

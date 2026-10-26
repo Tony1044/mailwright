@@ -26,7 +26,7 @@ open = { workspace = true }
 dirs = { workspace = true }
 mime_guess = { workspace = true }
 ureq = { workspace = true }
-notify-rust = "4.18"
+mailwright-winshell = { workspace = true }
 
 [dev-dependencies]
 egui_kittest = { workspace = true }
@@ -34,5 +34,6 @@ egui_kittest = { workspace = true }
 # Load libwayland at run time (as eframe does), so building needs no Wayland development files.
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 wayland-sys = { version = "0.31", features = ["dlopen"] }
+notify-rust = "4.18"
 # The unread count on the dock or taskbar icon (Unity launcher API: Ubuntu Dock, Dash to Dock, KDE).
 zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }

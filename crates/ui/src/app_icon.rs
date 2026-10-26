@@ -115,3 +115,57 @@ pub fn png(size: u32) -> Vec<u8> {
     let _ = image::DynamicImage::ImageRgba8(img).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png);
     out
 }
+
+/// The new-mail envelope on its own (an amber disc with a white envelope), as a PNG: the overlay
+/// on the Windows taskbar button.
+pub fn new_mail_png(size: u32) -> Vec<u8> {
+    let mut px = vec![0u8; (size * size * 4) as usize];
+    let s = size as f32 / 20.0;
+    let amber = [0xE8u8, 0x8A, 0x00];
+    let near_line = |x: f32, y: f32, a: (f32, f32), b: (f32, f32), w: f32| {
+        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+        let t = (((x - a.0) * dx + (y - a.1) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
+        (x - (a.0 + t * dx)).powi(2) + (y - (a.1 + t * dy)).powi(2) <= (w / 2.0).powi(2)
+    };
+    for yy in 0..size {
+        for xx in 0..size {
+            let mut acc = [0f32; 4];
+            for (sx, sy) in [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)] {
+                let x = (xx as f32 + sx) / s;
+                let y = (yy as f32 + sy) / s;
+                let d2 = (x - 10.0).powi(2) + (y - 10.0).powi(2);
+                let mut c: Option<[u8; 3]> = None;
+                if d2 <= 10.0f32.powi(2) {
+                    c = Some([255, 255, 255]);
+                }
+                if d2 <= 8.6f32.powi(2) {
+                    c = Some(amber);
+                    if (4.6..=15.4).contains(&x) && (6.2..=13.8).contains(&y) {
+                        c = Some([255, 255, 255]);
+                        if near_line(x, y, (5.2, 6.9), (10.0, 10.6), 1.3) || near_line(x, y, (10.0, 10.6), (14.8, 6.9), 1.3) {
+                            c = Some(amber);
+                        }
+                    }
+                }
+                if let Some(c) = c {
+                    acc[0] += c[0] as f32;
+                    acc[1] += c[1] as f32;
+                    acc[2] += c[2] as f32;
+                    acc[3] += 255.0;
+                }
+            }
+            let i = ((yy * size + xx) * 4) as usize;
+            if acc[3] > 0.0 {
+                let k = 255.0 / acc[3];
+                px[i] = (acc[0] * k) as u8;
+                px[i + 1] = (acc[1] * k) as u8;
+                px[i + 2] = (acc[2] * k) as u8;
+                px[i + 3] = (acc[3] / 4.0) as u8;
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let img = image::RgbaImage::from_raw(size, size, px).unwrap_or_default();
+    let _ = image::DynamicImage::ImageRgba8(img).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png);
+    out
+}

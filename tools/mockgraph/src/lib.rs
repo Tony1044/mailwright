@@ -98,6 +98,11 @@ pub struct State {
     pub throttle_next: u32,
     /// Answer changes to messages (PATCH) with 503 while this is set.
     pub refuse_message_changes: bool,
+    /// Report each change in a delta round as a removal followed by the item again (as some
+    /// mailboxes do).
+    pub updates_as_remove_then_add: bool,
+    /// Messages delta never reports (a server that misses things).
+    pub hidden_from_delta: HashSet<String>,
     /// Every request seen, as `METHOD /path?query`.
     pub log: Vec<String>,
     /// Messages sent (their JSON at send time).
@@ -127,6 +132,8 @@ impl State {
             uploads: HashMap::new(),
             throttle_next: 0,
             refuse_message_changes: false,
+            updates_as_remove_then_add: false,
+            hidden_from_delta: HashSet::new(),
             log: Vec::new(),
             sent: Vec::new(),
             token_lifetime: 3600,
@@ -885,8 +892,14 @@ fn delta(st: &State, graph: &str, folder: &str, q: &Query, prefer: &str) -> Repl
     let mut items: Vec<Value> = Vec::new();
     let mut changed: Vec<&Msg> =
         st.messages.iter().filter(|m| m.folder == folder && m.seq > since && m.seq <= snapshot).filter(|m| filter.as_deref().is_none_or(|f| received(m).as_str() >= f)).collect();
+    changed.retain(|m| !st.hidden_from_delta.contains(&m.id));
     changed.sort_by(|a, b| received(b).cmp(&received(a)));
-    items.extend(changed.iter().map(|m| st.msg_json(m, select, false)));
+    for m in &changed {
+        if since > 0 && st.updates_as_remove_then_add {
+            items.push(json!({"id": m.id, "@removed": {"reason": "changed"}}));
+        }
+        items.push(st.msg_json(m, select, false));
+    }
     if since > 0 {
         for (f, id, seq) in &st.tombstones {
             if f == folder && *seq > since && *seq <= snapshot && !st.messages.iter().any(|m| &m.id == id && m.folder == folder) {

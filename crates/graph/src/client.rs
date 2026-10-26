@@ -27,6 +27,12 @@ pub const SMALL_ATTACHMENT: usize = 3 * 1024 * 1024;
 const UPLOAD_CHUNK: usize = 320 * 1024 * 10;
 
 /// One page of a delta round.
+/// The end of a Graph id, enough to tell messages apart in the log.
+pub fn short_id(id: &str) -> String {
+    let n = id.chars().count();
+    id.chars().skip(n.saturating_sub(12)).collect()
+}
+
 #[derive(Debug, Default)]
 pub struct DeltaPage<T> {
     pub changed: Vec<T>,
@@ -284,14 +290,37 @@ impl GraphClient {
         };
         let page: Page<Message> = self.json("GET", &path, None, &["odata.maxpagesize=100"])?;
         let mut out = DeltaPage { next_link: page.next_link, delta_link: page.delta_link, ..Default::default() };
-        for m in page.value {
-            if m.removed.is_some() {
+        // Order matters: a page can say an item was removed and then give it again (an update
+        // reported as remove-and-add). The last word on each item wins.
+        let mut last: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for (i, m) in page.value.iter().enumerate() {
+            last.insert(m.id.clone(), i);
+        }
+        for (i, m) in page.value.into_iter().enumerate() {
+            if last.get(&m.id) != Some(&i) {
+                log::info!("delta for {folder_id}: {} appears more than once in a page; keeping the last", short_id(&m.id));
+                continue;
+            }
+            if let Some(r) = &m.removed {
+                log::info!("delta for {folder_id}: {} removed ({r})", short_id(&m.id));
                 out.removed.push(m.id);
             } else {
                 out.changed.push(m);
             }
         }
         Ok(out)
+    }
+
+    /// The newest messages in a folder (not a delta query): a check that nothing was missed.
+    pub fn newest_messages(&self, folder_id: &str, top: usize) -> Result<Vec<Message>, GraphError> {
+        let page: Page<Message> =
+            self.json("GET", &format!("/me/mailFolders/{folder_id}/messages?$select={MESSAGE_LIST_SELECT}&$orderby=receivedDateTime+desc&$top={}", top.clamp(1, 100)), None, &[])?;
+        Ok(page.value)
+    }
+
+    /// One message's list properties.
+    pub fn message_brief(&self, id: &str) -> Result<Message, GraphError> {
+        self.json("GET", &format!("/me/messages/{id}?$select={MESSAGE_LIST_SELECT}"), None, &[])
     }
 
     /// A message with its body (HTML) and all recipients.

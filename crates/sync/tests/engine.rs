@@ -310,3 +310,43 @@ fn a_change_the_server_keeps_refusing_never_holds_up_new_mail() {
     rig.wait(|u| matches!(u, Update::Queued(0)));
     assert_eq!(s.queued_count().unwrap(), 0);
 }
+
+#[test]
+fn a_message_reported_as_removed_then_changed_stays() {
+    let rig = Rig::new("readstays");
+    let s = rig.store();
+    let inbox_id = inbox(&s);
+    let target = s.messages(&inbox_id, ListFilter::All, SortBy::Date, false, "").unwrap().into_iter().find(|m| !m.is_read).unwrap();
+    rig.mock.state().updates_as_remove_then_add = true;
+    rig.sync.send(Command::Do(Action::SetRead { id: target.id.clone(), read: true }));
+    rig.wait(|u| matches!(u, Update::Queued(0)));
+    rig.round();
+    rig.round();
+    let after = s.message(&target.id).unwrap().expect("a message that was only read is still there");
+    assert!(after.is_read);
+    assert_eq!(after.folder_id, inbox_id);
+}
+
+#[test]
+fn the_inbox_check_finds_mail_delta_missed() {
+    let rig = Rig::new("inboxcheck");
+    let s = rig.store();
+    let inbox_id = inbox(&s);
+    let id = {
+        let mut st = rig.mock.state();
+        let props = serde_json::Map::from_iter([
+            ("subject".to_string(), serde_json::json!("Delta never said")),
+            ("from".to_string(), serde_json::json!({"emailAddress": {"name": "Royal Mail", "address": "no-reply@royalmail.example"}})),
+            ("receivedDateTime".to_string(), serde_json::json!(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string())),
+            ("isRead".to_string(), serde_json::json!(false)),
+        ]);
+        let id = st.deliver("inbox", props, "<p>Parcel</p>", vec![]);
+        st.hidden_from_delta.insert(id.clone());
+        id
+    };
+    rig.sync.send(Command::SyncAll);
+    let seen = rig.wait(|u| matches!(u, Update::NewMail(_)));
+    let Some(Update::NewMail(list)) = seen.last() else { unreachable!() };
+    assert_eq!(list[0].subject, "Delta never said");
+    assert_eq!(s.message(&id).unwrap().unwrap().folder_id, inbox_id);
+}

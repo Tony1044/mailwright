@@ -502,6 +502,7 @@ impl Engine {
                 return;
             }
         }
+        self.check_inbox();
         self.refresh_calendar(tree_due);
         // Quiet-time work: bodies of the last fortnight's mail, for reading offline.
         let core: Vec<String> = ["inbox", "sentitems", "drafts"].iter().filter_map(|wk| self.store.folder_by_well_known(wk).ok().flatten()).collect();
@@ -603,6 +604,8 @@ impl Engine {
             } else {
                 Default::default()
             };
+            let mut page = page;
+            self.confirm_removals(&c, folder, &mut page.changed, &mut page.removed);
             let saved_ok = (page.changed.is_empty() || self.store.upsert_messages(folder, &page.changed).map_err(|e| log::error!("saving mail in {folder}: {e}")).is_ok())
                 && (page.removed.is_empty() || self.store.remove_messages(folder, &page.removed).map_err(|e| log::error!("removing mail in {folder}: {e}")).is_ok());
             if !saved_ok {
@@ -611,14 +614,7 @@ impl Engine {
                 return true;
             }
             for m in page.changed.iter().filter(|m| fresh.contains(&m.id) && m.is_read != Some(true) && m.is_draft != Some(true)) {
-                let from = m.from.as_ref().or(m.sender.as_ref()).map(mailwright_store::Addr::from_graph).unwrap_or_default();
-                arrived.push(NewMail {
-                    id: m.id.clone(),
-                    from: from.label().to_string(),
-                    subject: m.subject.clone().unwrap_or_default(),
-                    preview: m.body_preview.clone().unwrap_or_default(),
-                    focused: m.inference_classification.as_deref() != Some("other"),
-                });
+                arrived.push(new_mail(m));
             }
             if first && (page.next_link.is_some() || pages > 1) {
                 // A big folder fills in page by page.
@@ -650,6 +646,76 @@ impl Engine {
             self.emit(Update::FoldersChanged);
         }
         true
+    }
+
+    /// Before taking a recent message out of the cache because delta said so, ask the server
+    /// whether it's really gone. If it's still in the folder, keep it (and say so in the log).
+    fn confirm_removals(&mut self, c: &GraphClient, folder: &str, changed: &mut Vec<mailwright_graph::types::Message>, removed: &mut Vec<String>) {
+        if removed.is_empty() {
+            return;
+        }
+        let recent = chrono::Utc::now().timestamp() - 7 * 86_400;
+        let mut checks = 0;
+        removed.retain(|id| {
+            let Some(row) = self.store.message(id).ok().flatten() else { return true };
+            if row.folder_id != folder || row.received < recent || checks >= 20 {
+                return true;
+            }
+            checks += 1;
+            match c.message_brief(id) {
+                Ok(m) if m.parent_folder_id.as_deref().is_none_or(|p| p == folder) => {
+                    log::warn!("delta said {} left {folder}, but it's still there: kept", mailwright_graph::client::short_id(id));
+                    changed.push(m);
+                    false
+                }
+                Ok(_) => true,
+                Err(e) if e.is_not_found() => true,
+                Err(e) => {
+                    log::warn!("checking {} before removing it: {e}; kept for now", mailwright_graph::client::short_id(id));
+                    false
+                }
+            }
+        });
+    }
+
+    /// A check on the Inbox that doesn't rely on delta: the newest messages, straight from the
+    /// folder. Anything delta missed is added (and announced, if it's new and unread).
+    fn check_inbox(&mut self) {
+        let Some(c) = self.client.clone() else { return };
+        let Some(inbox) = self.store.folder_by_well_known("inbox").ok().flatten() else { return };
+        if self.store.delta_link(&inbox).ok().flatten().is_none() {
+            return;
+        }
+        let list = match c.newest_messages(&inbox, 25) {
+            Ok(l) => l,
+            Err(e) => {
+                self.trouble(&e);
+                return;
+            }
+        };
+        let ids: Vec<String> = list.iter().map(|m| m.id.clone()).collect();
+        let known = self.store.known_ids(&ids).unwrap_or_default();
+        let missing: Vec<_> = list.into_iter().filter(|m| !known.contains(&m.id)).collect();
+        if missing.is_empty() {
+            return;
+        }
+        log::warn!("Inbox check found {} message(s) delta hadn't delivered: {}", missing.len(), missing.iter().map(|m| mailwright_graph::client::short_id(&m.id)).collect::<Vec<_>>().join(", "));
+        if let Err(e) = self.store.upsert_messages(&inbox, &missing) {
+            log::error!("saving mail in the Inbox: {e}");
+            return;
+        }
+        let lately = chrono::Utc::now().timestamp() - 6 * 3600;
+        let arrived: Vec<NewMail> = missing
+            .iter()
+            .filter(|m| m.is_read != Some(true) && m.is_draft != Some(true))
+            .filter(|m| m.received_date_time.as_deref().and_then(mailwright_store::parse_time).is_some_and(|t| t >= lately))
+            .map(new_mail)
+            .collect();
+        if !arrived.is_empty() {
+            self.emit(Update::NewMail(arrived));
+        }
+        self.emit(Update::MessagesChanged);
+        self.emit(Update::FoldersChanged);
     }
 
     fn refresh_calendar(&mut self, list_calendars: bool) {
@@ -863,6 +929,17 @@ impl Engine {
             self.emit(Update::CalendarChanged);
         }
         true
+    }
+}
+
+fn new_mail(m: &mailwright_graph::types::Message) -> NewMail {
+    let from = m.from.as_ref().or(m.sender.as_ref()).map(Addr::from_graph).unwrap_or_default();
+    NewMail {
+        id: m.id.clone(),
+        from: from.label().to_string(),
+        subject: m.subject.clone().unwrap_or_default(),
+        preview: m.body_preview.clone().unwrap_or_default(),
+        focused: m.inference_classification.as_deref() != Some("other"),
     }
 }
 

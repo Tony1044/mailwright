@@ -156,6 +156,7 @@ fn options(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
         app.options_draft = Some(app.settings.clone());
     }
     let Some(mut d) = app.options_draft.take() else { return };
+    let mut test = None;
     ui.label(egui::RichText::new("Mailwright Options").font(semibold(26.0)));
     ui.add_space(16.0);
     section(ui, "General", t);
@@ -198,8 +199,7 @@ fn options(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
     ui.checkbox(&mut d.new_mail_alert, "Display a Desktop Alert");
     ui.checkbox(&mut d.new_mail_envelope, "Show an envelope icon on the taskbar");
     if ui.small_button("Test").on_hover_text("Play the sound and show an alert").clicked() {
-        let items = vec![mailwright_sync::NewMail { id: String::new(), from: "Mailwright".into(), subject: "This is what new mail looks like".into(), preview: String::new(), focused: true }];
-        crate::notify::announce(crate::notify::Alert { account: String::new(), items, popup: d.new_mail_alert, sound: d.new_mail_sound }, None, || {});
+        test = Some((d.new_mail_alert, d.new_mail_sound));
     }
     ui.add_space(8.0);
     ui.checkbox(&mut d.message_preview, "Show a preview line under each message");
@@ -259,6 +259,9 @@ fn options(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
             done = true;
         }
     });
+    if let Some((popup, sound)) = test {
+        app.test_alert(popup, sound);
+    }
     if done {
         app.backstage = None;
     } else {

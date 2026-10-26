@@ -181,8 +181,15 @@ pub struct MailApp {
     style_ready: bool,
     fonts_frames: u8,
     pub options_draft: Option<Settings>,
-    /// New mail that hasn't been looked at yet: the taskbar icon carries an envelope.
+    /// New mail that hasn't been read yet, as (account, message id): while there is any, the
+    /// taskbar button carries an envelope.
+    pub waiting: Vec<(String, String)>,
     pub new_mail_waiting: bool,
+    last_wait_check: Instant,
+    /// The Desktop Alert showing (Windows).
+    pub desktop_alert: Option<crate::alert::DesktopAlert>,
+    /// The main window's native handle (Windows), for the taskbar overlay.
+    pub native_window: isize,
     icon_badged: Option<bool>,
     window_title: String,
     badge: crate::notify::Badge,
@@ -190,6 +197,11 @@ pub struct MailApp {
     clicked_rx: Receiver<crate::notify::Clicked>,
     /// Where sign-ins are kept (asking the keyring is slow, so it's asked once).
     pub keyring_location: Option<String>,
+}
+
+/// Mailwright draws its own Desktop Alert (Windows; elsewhere with MAILWRIGHT_OWN_ALERT set).
+fn own_alert() -> bool {
+    cfg!(windows) || std::env::var_os("MAILWRIGHT_OWN_ALERT").is_some()
 }
 
 fn safe_name(s: &str) -> String {
@@ -235,7 +247,11 @@ impl MailApp {
             style_ready: false,
             fonts_frames: 0,
             options_draft: None,
+            waiting: Vec::new(),
             new_mail_waiting: false,
+            last_wait_check: Instant::now(),
+            desktop_alert: None,
+            native_window: 0,
             icon_badged: None,
             window_title: String::new(),
             badge: crate::notify::Badge::new(),
@@ -668,7 +684,7 @@ impl MailApp {
             self.cal.reload(&stores);
         }
         while let Ok(c) = self.clicked_rx.try_recv() {
-            self.open_from_alert(ctx, &c.account, &c.id);
+            self.open_alert(ctx, &c.account, Some(&c.id));
         }
         self.mark_read_timer(ctx);
         crate::keys::shortcuts(self, ctx);
@@ -682,20 +698,30 @@ impl MailApp {
 
     /// The window title, the taskbar envelope, and the dock's unread count.
     fn window_state(&mut self, ctx: &Context) {
-        let focused = ctx.input(|i| i.viewport().focused).unwrap_or(false);
-        let on_inbox = self.view == View::Mail && self.current_folder().is_some_and(|f| f.well_known.as_deref() == Some("inbox"));
-        if self.new_mail_waiting && focused && on_inbox {
-            self.new_mail_waiting = false;
+        // The envelope stays until the new mail has been read (or deleted), as in Outlook.
+        if !self.waiting.is_empty() && self.last_wait_check.elapsed() >= std::time::Duration::from_secs(1) {
+            self.last_wait_check = Instant::now();
+            let sessions = &self.sessions;
+            self.waiting.retain(|(acct, id)| {
+                sessions.iter().find(|s| s.label() == acct).is_some_and(|s| s.store.message(id).ok().flatten().is_some_and(|m| !m.is_read))
+            });
         }
+        if !self.waiting.is_empty() {
+            ctx.request_repaint_after(std::time::Duration::from_secs(1));
+        }
+        self.new_mail_waiting = !self.waiting.is_empty() && self.settings.new_mail_envelope;
         let unread = self.inbox_unread();
-        if unread == 0 {
-            self.new_mail_waiting = false;
-        }
-        let badged = self.new_mail_waiting && self.settings.new_mail_envelope;
-        if self.icon_badged != Some(badged) {
+        let badged = self.new_mail_waiting;
+        if self.icon_badged != Some(badged) && (!cfg!(windows) || self.native_window != 0) {
             self.icon_badged = Some(badged);
-            let rgba = if badged { crate::app_icon::rgba_badged(256) } else { crate::app_icon::rgba(256) };
-            ctx.send_viewport_cmd(egui::ViewportCommand::Icon(Some(Arc::new(egui::IconData { rgba, width: 256, height: 256 }))));
+            if cfg!(windows) {
+                // An envelope over the taskbar button, as Outlook does (shown even when pinned).
+                let png = badged.then(|| crate::app_icon::new_mail_png(32));
+                mailwright_winshell::set_overlay(self.native_window, png.as_deref(), if badged { "New mail" } else { "" });
+            } else {
+                let rgba = if badged { crate::app_icon::rgba_badged(256) } else { crate::app_icon::rgba(256) };
+                ctx.send_viewport_cmd(egui::ViewportCommand::Icon(Some(Arc::new(egui::IconData { rgba, width: 256, height: 256 }))));
+            }
         }
         self.badge.set(if self.settings.new_mail_envelope { unread } else { 0 });
         let title = match (self.view, self.session()) {
@@ -716,21 +742,52 @@ impl MailApp {
     /// New mail arrived in account `i`.
     fn mail_arrived(&mut self, ctx: &Context, i: usize, items: Vec<mailwright_sync::NewMail>) {
         log::info!("{} new message(s) for account {i}", items.len());
-        if self.settings.new_mail_envelope {
-            self.new_mail_waiting = true;
-        }
         let account = self.sessions[i].label().to_string();
-        let alert = crate::notify::Alert { account, items, popup: self.settings.new_mail_alert, sound: self.settings.new_mail_sound };
+        for m in &items {
+            self.waiting.push((account.clone(), m.id.clone()));
+        }
+        // Windows: Mailwright's own Desktop Alert. Linux: the desktop's notifications.
+        let own_alert = own_alert();
+        if own_alert && self.settings.new_mail_alert {
+            self.desktop_alert = crate::alert::DesktopAlert::new(&account, &items);
+        }
+        let alert = crate::notify::Alert { account, items, popup: self.settings.new_mail_alert && !own_alert, sound: self.settings.new_mail_sound };
         let wake = self.wake();
         crate::notify::announce(alert, Some(self.clicked_tx.clone()), move || wake());
         ctx.request_repaint();
     }
 
-    /// The desktop alert was clicked: bring the window forward on that message.
-    fn open_from_alert(&mut self, ctx: &Context, account: &str, id: &str) {
-        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    /// File › Options › Test: what new mail looks and sounds like, with the settings as they are.
+    pub fn test_alert(&mut self, popup: bool, sound: bool) {
+        let items = vec![mailwright_sync::NewMail {
+            id: String::new(),
+            from: "Mailwright".into(),
+            subject: "This is what new mail looks like".into(),
+            preview: "New messages show here for a few seconds, with a sound and an envelope on the taskbar.".into(),
+            focused: true,
+        }];
+        let account = self.session().map(|s| s.label().to_string()).unwrap_or_default();
+        if own_alert() && popup {
+            self.desktop_alert = crate::alert::DesktopAlert::new(&account, &items).map(|mut a| {
+                a.id = None;
+                a
+            });
+        }
+        crate::notify::announce(crate::notify::Alert { account, items, popup: popup && !own_alert(), sound }, None, || {});
+    }
+
+    /// A new-mail alert was clicked: bring the window forward on that message (or the Inbox).
+    pub fn open_alert(&mut self, ctx: &Context, account: &str, id: Option<&str>) {
+        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
         let Some(i) = self.sessions.iter().position(|s| s.label() == account) else { return };
+        let Some(id) = id else {
+            if let Some(inbox) = self.sessions[i].folders.iter().find(|f| f.well_known.as_deref() == Some("inbox")).map(|f| f.id.clone()) {
+                self.backstage = None;
+                self.select_folder_in(i, &inbox);
+            }
+            return;
+        };
         let Ok(Some(row)) = self.sessions[i].store.message(id) else { return };
         self.backstage = None;
         self.mail.filter = ListFilter::All;
@@ -1397,6 +1454,7 @@ impl MailApp {
 
     /// Compose and appointment windows, and dialogs.
     fn windows(&mut self, ctx: &Context) {
+        crate::alert::show(self, ctx);
         crate::compose::windows(self, ctx);
         crate::reading::reader_windows(self, ctx);
         crate::event::windows(self, ctx);
