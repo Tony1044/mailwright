@@ -350,3 +350,44 @@ fn the_inbox_check_finds_mail_delta_missed() {
     assert_eq!(list[0].subject, "Delta never said");
     assert_eq!(s.message(&id).unwrap().unwrap().folder_id, inbox_id);
 }
+
+#[test]
+fn reading_a_message_keeps_it_when_updates_are_partial() {
+    let rig = Rig::new("partial");
+    let s = rig.store();
+    let inbox_id = inbox(&s);
+    let before = s.messages(&inbox_id, ListFilter::All, SortBy::Date, false, "").unwrap();
+    let target = before.iter().find(|m| !m.is_read).unwrap().clone();
+    rig.mock.state().partial_updates = true;
+    rig.sync.send(Command::Do(Action::SetRead { id: target.id.clone(), read: true }));
+    rig.wait(|u| matches!(u, Update::Queued(0)));
+    rig.round();
+    rig.round();
+    let after = s.messages(&inbox_id, ListFilter::All, SortBy::Date, false, "").unwrap();
+    let m = after.iter().find(|m| m.id == target.id).expect("still in the Inbox list");
+    assert!(m.is_read);
+    assert_eq!(m.subject, target.subject);
+    assert_eq!(m.received, target.received);
+    assert_eq!(after.len(), before.len());
+}
+
+#[test]
+fn mail_an_earlier_version_hid_is_repaired_on_start() {
+    let rig = Rig::new("repair");
+    let mut s = rig.store();
+    let inbox_id = inbox(&s);
+    let before = s.messages(&inbox_id, ListFilter::All, SortBy::Date, false, "").unwrap();
+    let hidden = before[0].id.clone();
+    // As 0.2.0 could leave it: filed under an id that isn't in the folder list.
+    let mut m = mailwright_graph::types::Message::default();
+    m.id = hidden.clone();
+    m.subject = Some(before[0].subject.clone());
+    m.received_date_time = Some("2026-10-26T09:01:00Z".into());
+    s.upsert_messages("AAMkInbox==", &[m]).unwrap();
+    assert!(!s.messages(&inbox_id, ListFilter::All, SortBy::Date, false, "").unwrap().iter().any(|x| x.id == hidden));
+    rig.sync.send(Command::Attach(Box::new(rig.client())));
+    rig.wait(|u| matches!(u, Update::Status(st) if st.starts_with("All folders are up to date")));
+    let after = s.messages(&inbox_id, ListFilter::All, SortBy::Date, false, "").unwrap();
+    assert!(after.iter().any(|x| x.id == hidden), "back in the Inbox");
+    assert_eq!(after.len(), before.len());
+}

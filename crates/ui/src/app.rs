@@ -186,6 +186,8 @@ pub struct MailApp {
     pub waiting: Vec<(String, String)>,
     pub new_mail_waiting: bool,
     last_wait_check: Instant,
+    /// When the Inbox came into view in the focused window (for clearing the envelope).
+    seen_inbox_since: Option<Instant>,
     /// The Desktop Alert showing (Windows).
     pub desktop_alert: Option<crate::alert::DesktopAlert>,
     /// The main window's native handle (Windows), for the taskbar overlay.
@@ -250,6 +252,7 @@ impl MailApp {
             waiting: Vec::new(),
             new_mail_waiting: false,
             last_wait_check: Instant::now(),
+            seen_inbox_since: None,
             desktop_alert: None,
             native_window: 0,
             icon_badged: None,
@@ -706,14 +709,27 @@ impl MailApp {
                 sessions.iter().find(|s| s.label() == acct).is_some_and(|s| s.store.message(id).ok().flatten().is_some_and(|m| !m.is_read))
             });
         }
+        // And, as in Outlook, once you've come to Mailwright and looked at your Inbox.
+        let focused = ctx.input(|i| i.viewport().focused).unwrap_or(false);
+        let on_inbox = self.view == View::Mail && self.backstage.is_none() && self.current_folder().is_some_and(|f| f.well_known.as_deref() == Some("inbox"));
+        if !self.waiting.is_empty() && focused && on_inbox {
+            let since = *self.seen_inbox_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= std::time::Duration::from_secs(2) {
+                log::info!("new mail seen: envelope off");
+                self.waiting.clear();
+            }
+        } else {
+            self.seen_inbox_since = None;
+        }
         if !self.waiting.is_empty() {
-            ctx.request_repaint_after(std::time::Duration::from_secs(1));
+            ctx.request_repaint_after(std::time::Duration::from_millis(500));
         }
         self.new_mail_waiting = !self.waiting.is_empty() && self.settings.new_mail_envelope;
         let unread = self.inbox_unread();
         let badged = self.new_mail_waiting;
         if self.icon_badged != Some(badged) && (!cfg!(windows) || self.native_window != 0) {
             self.icon_badged = Some(badged);
+            log::info!("taskbar envelope {}", if badged { "on" } else { "off" });
             if cfg!(windows) {
                 // An envelope over the taskbar button, as Outlook does (shown even when pinned).
                 let png = badged.then(|| crate::app_icon::new_mail_png(32));

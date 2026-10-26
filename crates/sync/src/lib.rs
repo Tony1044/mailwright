@@ -305,6 +305,7 @@ impl Engine {
                         self.trouble(&e);
                     }
                 }
+                self.repair();
                 self.round(true);
             }
             Command::SyncAll => {
@@ -369,8 +370,10 @@ impl Engine {
                 match c.search_messages(&q, 250) {
                     Ok(list) => {
                         let ids = list.iter().map(|m| m.id.clone()).collect();
+                        let folders: std::collections::HashSet<String> = self.store.folders().unwrap_or_default().into_iter().map(|f| f.id).collect();
                         for m in &list {
-                            let folder = m.parent_folder_id.clone().unwrap_or_default();
+                            // Only into a folder we know by that id (stored anywhere else, it couldn't be seen).
+                            let Some(folder) = m.parent_folder_id.clone().filter(|f| folders.contains(f)) else { continue };
                             let _ = self.store.upsert_messages(&folder, std::slice::from_ref(m));
                         }
                         self.status(format!("{} results from the server", list.len()));
@@ -577,6 +580,7 @@ impl Engine {
         let mut pages = 0;
         let is_inbox = self.store.folder_by_well_known("inbox").ok().flatten().as_deref() == Some(folder);
         let mut arrived: Vec<NewMail> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         loop {
             let page = match c.messages_delta(folder, link.as_deref(), if link.is_none() { Some(&since) } else { None }) {
                 Ok(p) => p,
@@ -606,7 +610,13 @@ impl Engine {
             };
             let mut page = page;
             self.confirm_removals(&c, folder, &mut page.changed, &mut page.removed);
-            let saved_ok = (page.changed.is_empty() || self.store.upsert_messages(folder, &page.changed).map_err(|e| log::error!("saving mail in {folder}: {e}")).is_ok())
+            let partial = page.changed.iter().filter(|m| !mailwright_store::is_whole(m)).count();
+            let elsewhere = page.changed.iter().filter(|m| m.parent_folder_id.as_deref().is_some_and(|p| !p.is_empty() && p != folder)).count();
+            if partial > 0 || elsewhere > 0 {
+                log::info!("{folder}: {partial} partial update(s), {elsewhere} naming another folder id");
+            }
+            seen.extend(page.changed.iter().map(|m| m.id.clone()));
+            let saved_ok = (page.changed.is_empty() || self.save_listed(&c, folder, &page.changed))
                 && (page.removed.is_empty() || self.store.remove_messages(folder, &page.removed).map_err(|e| log::error!("removing mail in {folder}: {e}")).is_ok());
             if !saved_ok {
                 // Keep the old sync point, so the next round asks for these again.
@@ -621,6 +631,15 @@ impl Engine {
                 self.emit(Update::MessagesChanged);
             }
             if let Some(d) = page.delta_link {
+                if first {
+                    // A full listing: anything stored here that the server didn't list has gone.
+                    let since = chrono::Utc::now().timestamp() - self.window_days * 86_400;
+                    match self.store.prune_unseen(folder, since, &seen) {
+                        Ok(0) => {}
+                        Ok(n) => log::info!("{folder}: {n} message(s) no longer on the server"),
+                        Err(e) => log::error!("tidying {folder}: {e}"),
+                    }
+                }
                 if let Err(e) = self.store.set_delta_link(folder, Some(&d)) {
                     log::error!("saving the sync point for {folder}: {e}");
                 }
@@ -646,6 +665,43 @@ impl Engine {
             self.emit(Update::FoldersChanged);
         }
         true
+    }
+
+    /// Save messages listed in `folder`; partial ones not stored yet are fetched whole first.
+    /// False when saving failed.
+    fn save_listed(&mut self, c: &GraphClient, folder: &str, msgs: &[mailwright_graph::types::Message]) -> bool {
+        let skipped = match self.store.upsert_messages(folder, msgs) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("saving mail in {folder}: {e}");
+                return false;
+            }
+        };
+        let mut whole = Vec::new();
+        for id in skipped.iter().take(100) {
+            match c.message_brief(id) {
+                Ok(m) => whole.push(m),
+                Err(e) if e.is_not_found() => {}
+                Err(e) => log::warn!("fetching {}: {e}", mailwright_graph::client::short_id(id)),
+            }
+        }
+        whole.is_empty() || self.store.upsert_messages(folder, &whole).map_err(|e| log::error!("saving mail in {folder}: {e}")).is_ok()
+    }
+
+    /// Mail an earlier version stored where it can't be seen: take it out and sync again from
+    /// scratch, which brings it back properly.
+    fn repair(&mut self) {
+        match self.store.remove_damaged() {
+            Ok(0) => {}
+            Ok(n) => {
+                log::warn!("repair: {n} message(s) were stored where they couldn't be seen; syncing all folders again");
+                for f in self.store.folders().unwrap_or_default() {
+                    let _ = self.store.set_delta_link(&f.id, None);
+                }
+                self.emit(Update::MessagesChanged);
+            }
+            Err(e) => log::error!("repair: {e}"),
+        }
     }
 
     /// Before taking a recent message out of the cache because delta said so, ask the server
@@ -695,15 +751,23 @@ impl Engine {
         };
         let ids: Vec<String> = list.iter().map(|m| m.id.clone()).collect();
         let known = self.store.known_ids(&ids).unwrap_or_default();
-        let missing: Vec<_> = list.into_iter().filter(|m| !known.contains(&m.id)).collect();
-        if missing.is_empty() {
+        let wrong: std::collections::HashSet<String> = self.store.differing(&inbox, &list).unwrap_or_default().into_iter().collect();
+        let fix: Vec<_> = list.into_iter().filter(|m| wrong.contains(&m.id)).collect();
+        if fix.is_empty() {
             return;
         }
-        log::warn!("Inbox check found {} message(s) delta hadn't delivered: {}", missing.len(), missing.iter().map(|m| mailwright_graph::client::short_id(&m.id)).collect::<Vec<_>>().join(", "));
-        if let Err(e) = self.store.upsert_messages(&inbox, &missing) {
+        let new_count = fix.iter().filter(|m| !known.contains(&m.id)).count();
+        log::warn!(
+            "Inbox check: {} message(s) missing and {} stored wrongly, put right: {}",
+            new_count,
+            fix.len() - new_count,
+            fix.iter().map(|m| mailwright_graph::client::short_id(&m.id)).collect::<Vec<_>>().join(", ")
+        );
+        if let Err(e) = self.store.upsert_messages(&inbox, &fix) {
             log::error!("saving mail in the Inbox: {e}");
             return;
         }
+        let missing: Vec<_> = fix.into_iter().filter(|m| !known.contains(&m.id)).collect();
         let lately = chrono::Utc::now().timestamp() - 6 * 3600;
         let arrived: Vec<NewMail> = missing
             .iter()

@@ -71,6 +71,11 @@ CREATE INDEX events_by_time ON events(start, end);
 CREATE TABLE actions(seq INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '');
 "#;
 
+/// Whether a message from Graph carries its list properties, rather than only what changed.
+pub fn is_whole(m: &Message) -> bool {
+    m.received_date_time.as_deref().is_some_and(|t| !t.is_empty()) && m.subject.is_some()
+}
+
 /// RFC 3339 / Graph timestamps to Unix seconds.
 pub fn parse_time(s: &str) -> Option<i64> {
     let s = s.trim();
@@ -292,7 +297,7 @@ impl Store {
     /// Replace the folder list with the server's (depth-first order), keeping each folder's delta
     /// link. Folders that are gone take their messages with them.
     pub fn save_folders(&mut self, folders: &[MailFolder], well_known: &[(String, String)]) -> Result<()> {
-        let tx = self.db.transaction()?;
+        let tx = self.db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let ids: Vec<&str> = folders.iter().map(|f| f.id.as_str()).collect();
         {
             let existing: Vec<String> = {
@@ -369,17 +374,41 @@ impl Store {
 
     // ---- messages ----------------------------------------------------------------------------
 
-    /// Save messages from a delta page or search. Messages with a change waiting keep their local
-    /// state; bodies already fetched are kept unless the message changed on the server.
-    pub fn upsert_messages(&mut self, folder: &str, msgs: &[Message]) -> Result<usize> {
-        let tx = self.db.transaction()?;
-        let mut n = 0;
+    /// Save messages from a delta page or search, into `folder` (the folder they were listed
+    /// from: a message's own `parentFolderId` can name the same folder differently). Messages with
+    /// a change waiting keep their local state; bodies already fetched are kept unless the message
+    /// changed on the server. A partial message (an update carrying only what changed, such as the
+    /// read state) only changes those fields; a partial message that isn't stored yet is skipped,
+    /// and its id is returned so the caller can fetch it whole.
+    pub fn upsert_messages(&mut self, folder: &str, msgs: &[Message]) -> Result<Vec<String>> {
+        let tx = self.db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let mut skipped = Vec::new();
         for m in msgs {
             let pending: Option<i64> = tx.query_row("SELECT pending FROM messages WHERE id = ?1", [&m.id], |r| r.get(0)).optional()?;
             if pending.unwrap_or(0) > 0 {
                 continue;
             }
-            let folder_id = m.parent_folder_id.clone().filter(|p| !p.is_empty()).unwrap_or_else(|| folder.to_string());
+            let folder_id = if folder.is_empty() { m.parent_folder_id.clone().unwrap_or_default() } else { folder.to_string() };
+            if !is_whole(m) {
+                if pending.is_none() {
+                    skipped.push(m.id.clone());
+                    continue;
+                }
+                tx.execute(
+                    "UPDATE messages SET folder_id = ?2, is_read = COALESCE(?3, is_read), flag = COALESCE(?4, flag), importance = COALESCE(?5, importance),
+                        focused = COALESCE(?6, focused), categories = CASE WHEN ?7 = '[]' THEN categories ELSE ?7 END WHERE id = ?1",
+                    params![
+                        m.id,
+                        folder_id,
+                        m.is_read,
+                        m.flag.as_ref().map(|f| f.flag_status.clone()).filter(|s| !s.is_empty()),
+                        m.importance,
+                        m.inference_classification.as_deref().map(|c| c != "other"),
+                        serde_json::to_string(&m.categories)?,
+                    ],
+                )?;
+                continue;
+            }
             let from = m.from.as_ref().or(m.sender.as_ref()).map(Addr::from_graph).unwrap_or_default();
             let received = m.received_date_time.as_deref().and_then(parse_time).unwrap_or(0);
             let sent = m.sent_date_time.as_deref().and_then(parse_time).unwrap_or(received);
@@ -430,10 +459,50 @@ impl Store {
             let text = body.as_deref().map(index_text).unwrap_or_else(|| m.body_preview.clone().unwrap_or_default());
             tx.execute("DELETE FROM messages_fts WHERE rowid = ?1", [rowid])?;
             tx.execute("INSERT INTO messages_fts(rowid, subject, people, body) VALUES (?1, ?2, ?3, ?4)", params![rowid, m.subject.clone().unwrap_or_default(), people, text])?;
-            n += 1;
         }
         tx.commit()?;
+        Ok(skipped)
+    }
+
+    /// Of these messages, the ones not stored in `folder` exactly as listed (missing, elsewhere,
+    /// or with a different date or subject): what a check against the server should put right.
+    pub fn differing(&self, folder: &str, msgs: &[Message]) -> Result<Vec<String>> {
+        let mut st = self.db.prepare_cached("SELECT folder_id, received, subject, focused FROM messages WHERE id = ?1")?;
+        let mut out = Vec::new();
+        for m in msgs {
+            let row: Option<(String, i64, String, bool)> = st.query_row([&m.id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional()?;
+            let received = m.received_date_time.as_deref().and_then(parse_time).unwrap_or(0);
+            let focused = m.inference_classification.as_deref() != Some("other");
+            let ok = row.is_some_and(|(f, r, s, fo)| f == folder && r == received && s == m.subject.clone().unwrap_or_default() && fo == focused);
+            if !ok {
+                out.push(m.id.clone());
+            }
+        }
+        Ok(out)
+    }
+
+    /// Messages that can't be shown: in a folder that isn't in the folder list, or missing their
+    /// date. Removed, and the number returned (a full re-sync then brings them back properly).
+    pub fn remove_damaged(&mut self) -> Result<usize> {
+        let tx = self.db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let cond = "pending = 0 AND id NOT LIKE 'local:%' AND (received = 0 OR folder_id NOT IN (SELECT id FROM folders))";
+        tx.execute(&format!("DELETE FROM messages_fts WHERE rowid IN (SELECT rowid FROM messages WHERE {cond})"), [])?;
+        let n = tx.execute(&format!("DELETE FROM messages WHERE {cond}"), [])?;
+        tx.commit()?;
         Ok(n)
+    }
+
+    /// After a full sync of `folder`: drop what the server no longer has there (since `since`).
+    pub fn prune_unseen(&mut self, folder: &str, since: i64, seen: &std::collections::HashSet<String>) -> Result<usize> {
+        let ids: Vec<String> = {
+            let mut st = self.db.prepare("SELECT id FROM messages WHERE folder_id = ?1 AND received >= ?2 AND pending = 0 AND id NOT LIKE 'local:%'")?;
+            st.query_map(params![folder, since], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
+        };
+        let gone: Vec<String> = ids.into_iter().filter(|i| !seen.contains(i)).collect();
+        if !gone.is_empty() {
+            self.remove_messages(folder, &gone)?;
+        }
+        Ok(gone.len())
     }
 
     /// Unread messages in a folder's Focused or Other half.
@@ -455,7 +524,7 @@ impl Store {
 
     /// Delta said these are gone from a folder.
     pub fn remove_messages(&mut self, folder: &str, ids: &[String]) -> Result<()> {
-        let tx = self.db.transaction()?;
+        let tx = self.db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         for id in ids {
             tx.execute("DELETE FROM messages_fts WHERE rowid IN (SELECT rowid FROM messages WHERE id = ?1 AND folder_id = ?2 AND pending = 0)", [id, folder])?;
             tx.execute("DELETE FROM attachments WHERE message_id = ?1 AND NOT EXISTS (SELECT 1 FROM messages WHERE id = ?1 AND (folder_id <> ?2 OR pending > 0))", [id, folder])?;
@@ -530,7 +599,7 @@ impl Store {
     /// A message's full details, from `message_full`.
     pub fn save_body(&mut self, m: &Message) -> Result<()> {
         let html = m.body.as_ref().map(|b| if b.content_type.eq_ignore_ascii_case("html") { b.content.clone() } else { text_to_html(&b.content) }).unwrap_or_default();
-        let tx = self.db.transaction()?;
+        let tx = self.db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let rowid: Option<i64> = tx
             .query_row(
                 "UPDATE messages SET body = ?2, to_json = ?3, cc_json = ?4, bcc_json = ?5 WHERE id = ?1 RETURNING rowid",
@@ -567,7 +636,7 @@ impl Store {
     // ---- attachments -------------------------------------------------------------------------
 
     pub fn save_attachments(&mut self, message_id: &str, list: &[Attachment]) -> Result<()> {
-        let tx = self.db.transaction()?;
+        let tx = self.db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let keep: Vec<&str> = list.iter().map(|a| a.id.as_str()).collect();
         {
             let existing: Vec<String> = {
@@ -641,7 +710,7 @@ impl Store {
     // ---- calendar ----------------------------------------------------------------------------
 
     pub fn save_calendars(&mut self, list: &[Calendar]) -> Result<()> {
-        let tx = self.db.transaction()?;
+        let tx = self.db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let keep: Vec<&str> = list.iter().map(|c| c.id.as_str()).collect();
         let existing: Vec<String> = {
             let mut st = tx.prepare("SELECT id FROM calendars")?;
@@ -672,7 +741,7 @@ impl Store {
 
     /// Replace a calendar's events overlapping `[from, to)` with the server's view of that window.
     pub fn save_calendar_window(&mut self, calendar_id: &str, from: i64, to: i64, events: &[Event]) -> Result<()> {
-        let tx = self.db.transaction()?;
+        let tx = self.db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         tx.execute("DELETE FROM events WHERE calendar_id = ?1 AND start < ?3 AND end > ?2 AND local = 0 AND pending = 0", params![calendar_id, from, to])?;
         for e in events {
             let pending: Option<i64> = tx.query_row("SELECT pending FROM events WHERE id = ?1", [&e.id], |r| r.get(0)).optional()?;
@@ -741,7 +810,7 @@ impl Store {
 
     /// Apply a change to the cache and queue it for the server. Returns its queue number.
     pub fn apply(&mut self, action: Action) -> Result<i64> {
-        let tx = self.db.transaction()?;
+        let tx = self.db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         match &action {
             Action::SetRead { id, read } => {
                 let folder: Option<(String, bool)> = tx.query_row("SELECT folder_id, is_read FROM messages WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
@@ -883,7 +952,7 @@ impl Store {
 
     /// The server has this change (or it can never be made): take it off the queue.
     pub fn done(&mut self, q: &QueuedAction) -> Result<()> {
-        let tx = self.db.transaction()?;
+        let tx = self.db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         tx.execute("DELETE FROM actions WHERE seq = ?1", [q.seq])?;
         if let Some(id) = q.action.message_id() {
             tx.execute("UPDATE messages SET pending = MAX(0, pending - 1) WHERE id = ?1", [id])?;
@@ -921,7 +990,7 @@ impl Store {
         if old == new {
             return Ok(());
         }
-        let tx = self.db.transaction()?;
+        let tx = self.db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         // If delta already brought the new id, drop that copy in favour of ours.
         tx.execute("DELETE FROM messages_fts WHERE rowid IN (SELECT rowid FROM messages WHERE id = ?1)", [new])?;
         tx.execute("DELETE FROM messages WHERE id = ?1", [new])?;
@@ -967,7 +1036,7 @@ impl Store {
     /// Drop a change the server refused, leaving the cache as it is (an unsent message stays in
     /// the Outbox to be fixed and sent again).
     pub fn discard(&mut self, q: &QueuedAction) -> Result<()> {
-        let tx = self.db.transaction()?;
+        let tx = self.db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         tx.execute("DELETE FROM actions WHERE seq = ?1", [q.seq])?;
         if let Some(id) = q.action.message_id() {
             tx.execute("UPDATE messages SET pending = MAX(0, pending - 1) WHERE id = ?1", [id])?;

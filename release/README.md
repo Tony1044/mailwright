@@ -1,11 +1,18 @@
-# Mailwright 0.2.1 binaries
+# Mailwright 0.2.2 binaries
 
 | File | For |
 | --- | --- |
 | `mailwright.exe` | Windows 10 and 11 (64-bit). A single file: no installer, no extra DLLs. |
-| `mailwright_0.2.1-1_amd64.deb` | Ubuntu 24.04 or later (64-bit). Install with `sudo apt install ./mailwright_0.2.1-1_amd64.deb` (it replaces MailCraft if that's installed). |
+| `mailwright_0.2.2-1_amd64.deb` | Ubuntu 24.04 or later (64-bit). Install with `sudo apt install ./mailwright_0.2.2-1_amd64.deb` (it replaces MailCraft if that's installed). |
 
-## What's new in 0.2.1
+## What's new in 0.2.2
+
+- Fixed: reading a message could blank its subject, sender, and date, so it dropped out of view (Outlook.com sends only what changed, such as the read state, and Mailwright saved that over the whole message). Updates now change only what they carry, and messages stay in the folder they were synced from.
+- Repair: on first start, copies an earlier version damaged are removed and the folders sync again from scratch, so everything comes back.
+- The Inbox check now compares details (folder, date, subject, Focused or Other), not just whether a message is there.
+- The taskbar envelope goes once the new mail is read, or once you've looked at your Inbox for a couple of seconds.
+
+## In 0.2.1
 
 - Fixed: a message you'd read could disappear from Mailwright (Outlook.com reports some changes as "removed"). Mailwright now checks with the server before taking a recent message out, and every minute compares the newest Inbox messages with the server and adds anything missing.
 - Windows: new mail now shows Mailwright's own Desktop Alert in the bottom-right corner (as classic Outlook does), plays the Windows new-mail sound, and puts an amber envelope on the taskbar button – also when Mailwright is pinned – until you've read the new mail.

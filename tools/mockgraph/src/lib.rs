@@ -103,6 +103,9 @@ pub struct State {
     pub updates_as_remove_then_add: bool,
     /// Messages delta never reports (a server that misses things).
     pub hidden_from_delta: HashSet<String>,
+    /// Report changes in a delta round with only the properties that changed (read state, flag),
+    /// and a different spelling of the folder id, as some mailboxes do.
+    pub partial_updates: bool,
     /// Every request seen, as `METHOD /path?query`.
     pub log: Vec<String>,
     /// Messages sent (their JSON at send time).
@@ -134,6 +137,7 @@ impl State {
             refuse_message_changes: false,
             updates_as_remove_then_add: false,
             hidden_from_delta: HashSet::new(),
+            partial_updates: false,
             log: Vec::new(),
             sent: Vec::new(),
             token_lifetime: 3600,
@@ -898,7 +902,12 @@ fn delta(st: &State, graph: &str, folder: &str, q: &Query, prefer: &str) -> Repl
         if since > 0 && st.updates_as_remove_then_add {
             items.push(json!({"id": m.id, "@removed": {"reason": "changed"}}));
         }
-        items.push(st.msg_json(m, select, false));
+        if since > 0 && st.partial_updates {
+            let full = st.msg_json(m, select, false);
+            items.push(json!({"id": m.id, "isRead": full["isRead"], "flag": full["flag"], "parentFolderId": format!("{}==", m.folder)}));
+        } else {
+            items.push(st.msg_json(m, select, false));
+        }
     }
     if since > 0 {
         for (f, id, seq) in &st.tombstones {
