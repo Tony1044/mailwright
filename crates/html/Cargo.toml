@@ -1,9 +1,9 @@
 [package]
-name = "mailcraft-html"
+name = "mailwright-html"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "HTML mail to a simple block model MailCraft can draw (and to plain text), with remote content kept out unless asked for"
+description = "HTML mail to a simple block model Mailwright can draw (and to plain text), with remote content kept out unless asked for"
 
 [lints]
 workspace = true

@@ -1,13 +1,13 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unreachable)]
-//! Headless screenshots of MailCraft against the sample mailbox.
+//! Headless screenshots of Mailwright against the sample mailbox.
 //!
-//! `cargo run -p mailcraft-ui --example ui_shot -- out_dir [steps…]` where each step is a command
+//! `cargo run -p mailwright-ui --example ui_shot -- out_dir [steps…]` where each step is a command
 //! (see `run`) or `shot:name` to save `out_dir/name.png`. Rendering uses wgpu (a software adapter
 //! is fine).
 
 use std::time::{Duration, Instant};
 
-use mailcraft_ui::{MailApp, Settings, View};
+use mailwright_ui::{MailApp, Settings, View};
 
 fn step(h: &mut egui_kittest::Harness<'static, MailApp>, n: usize) {
     for _ in 0..n {
@@ -64,10 +64,10 @@ fn run(h: &mut egui_kittest::Harness<'static, MailApp>, cmd: &str) {
         }
         "cal" => {
             let v = match arg {
-                "day" => mailcraft_ui::settings::CalendarView::Day,
-                "week" => mailcraft_ui::settings::CalendarView::Week,
-                "month" => mailcraft_ui::settings::CalendarView::Month,
-                _ => mailcraft_ui::settings::CalendarView::WorkWeek,
+                "day" => mailwright_ui::settings::CalendarView::Day,
+                "week" => mailwright_ui::settings::CalendarView::Week,
+                "month" => mailwright_ui::settings::CalendarView::Month,
+                _ => mailwright_ui::settings::CalendarView::WorkWeek,
             };
             h.state_mut().cal.set_view(v);
             wait(h, 1500, |_| false);
@@ -102,24 +102,24 @@ fn run(h: &mut egui_kittest::Harness<'static, MailApp>, cmd: &str) {
         }
         "backstage" => {
             h.state_mut().backstage = match arg {
-                "options" => Some(mailcraft_ui::app::Backstage::Options),
-                "about" => Some(mailcraft_ui::app::Backstage::About),
+                "options" => Some(mailwright_ui::app::Backstage::Options),
+                "about" => Some(mailwright_ui::app::Backstage::About),
                 "" | "none" => None,
-                _ => Some(mailcraft_ui::app::Backstage::Info),
+                _ => Some(mailwright_ui::app::Backstage::Info),
             };
             step(h, 4);
         }
         "theme" => {
-            let a = if arg == "dark" { mailcraft_ui::theme::Appearance::Dark } else { mailcraft_ui::theme::Appearance::Light };
+            let a = if arg == "dark" { mailwright_ui::theme::Appearance::Dark } else { mailwright_ui::theme::Appearance::Light };
             h.state_mut().settings.appearance = a;
-            mailcraft_ui::theme::set_appearance(&h.ctx, a);
+            mailwright_ui::theme::set_appearance(&h.ctx, a);
             step(h, 4);
         }
         "pane" => {
             h.state_mut().settings.reading_pane = match arg {
-                "bottom" => mailcraft_ui::settings::ReadingPane::Bottom,
-                "off" => mailcraft_ui::settings::ReadingPane::Off,
-                _ => mailcraft_ui::settings::ReadingPane::Right,
+                "bottom" => mailwright_ui::settings::ReadingPane::Bottom,
+                "off" => mailwright_ui::settings::ReadingPane::Off,
+                _ => mailwright_ui::settings::ReadingPane::Right,
             };
             step(h, 4);
         }
@@ -148,9 +148,9 @@ fn main() {
     let out = std::path::PathBuf::from(args.next().unwrap_or_else(|| "shots".into()));
     let _ = std::fs::create_dir_all(&out);
     let steps: Vec<String> = args.collect();
-    let data = std::env::temp_dir().join(format!("mailcraft-shot-{}", std::process::id()));
+    let data = std::env::temp_dir().join(format!("mailwright-shot-{}", std::process::id()));
     let mut settings = Settings::default();
-    settings.appearance = mailcraft_ui::theme::Appearance::Light;
+    settings.appearance = mailwright_ui::theme::Appearance::Light;
     let app = MailApp::new(settings, None, Some(data.clone()));
     let mut h = egui_kittest::Harness::builder()
         .with_size(egui::vec2(1440.0, 900.0))

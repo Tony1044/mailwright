@@ -1,4 +1,4 @@
-//! The MailCraft mark, drawn in code: an envelope on a rounded square in the app colour, with a
+//! The Mailwright mark, drawn in code: an envelope on a rounded square in the app colour, with a
 //! small calendar tab. The packaged icons (assets/app-icon) are rendered from the same design.
 
 use egui::{Color32, CornerRadius, Painter, Rect, Shape, Stroke, pos2};
@@ -22,11 +22,22 @@ pub fn paint(p: &Painter, r: Rect) {
 
 /// The icon as RGBA pixels (`size` square), for the window icon.
 pub fn rgba(size: u32) -> Vec<u8> {
+    draw(size, false)
+}
+
+/// The icon with a new-mail badge (an amber disc with a small envelope, top right), for the
+/// taskbar while new mail is waiting.
+pub fn rgba_badged(size: u32) -> Vec<u8> {
+    draw(size, true)
+}
+
+fn draw(size: u32, badge: bool) -> Vec<u8> {
     let mut px = vec![0u8; (size * size * 4) as usize];
     let s = size as f32 / 20.0;
     let blue = [0x0F, 0x6C, 0xBD];
     let dark = [0x0B, 0x4F, 0x8C];
     let light = [0x8F, 0xD3, 0xFF];
+    let amber = [0xE8, 0x8A, 0x00];
     let in_round = |x: f32, y: f32, x0: f32, y0: f32, x1: f32, y1: f32, rad: f32| {
         if x < x0 || x > x1 || y < y0 || y > y1 {
             return false;
@@ -60,6 +71,21 @@ pub fn rgba(size: u32) -> Vec<u8> {
                 }
                 if in_round(x, y, 12.0, 12.0, 18.0, 18.0, 1.0) {
                     c = Some(if y < 13.8 { light } else { dark });
+                }
+                if badge {
+                    let d2 = (x - 15.2).powi(2) + (y - 4.8).powi(2);
+                    if d2 <= 4.8f32.powi(2) {
+                        c = Some([255, 255, 255]);
+                    }
+                    if d2 <= 4.0f32.powi(2) {
+                        c = Some(amber);
+                        if in_round(x, y, 12.9, 3.2, 17.5, 6.6, 0.4) {
+                            c = Some([255, 255, 255]);
+                            if near_line(x, y, (13.1, 3.5), (15.2, 5.1), 0.55) || near_line(x, y, (15.2, 5.1), (17.3, 3.5), 0.55) {
+                                c = Some(amber);
+                            }
+                        }
+                    }
                 }
                 if let Some(c) = c {
                     acc[0] += c[0] as f32;

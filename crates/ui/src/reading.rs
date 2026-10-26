@@ -1,7 +1,7 @@
 //! The reading pane (and message windows): header, meeting box, attachments and the body.
 
 use egui::{Align2, Rect, Sense, Ui, pos2, vec2};
-use mailcraft_store::{Action, AttachmentRow};
+use mailwright_store::{Action, AttachmentRow};
 
 use crate::app::{MailApp, Reading};
 use crate::icons;
@@ -87,7 +87,7 @@ fn perform(app: &mut MailApp, a: Act) {
             if let Some(dir) = rfd::FileDialog::new().set_title("Save All Attachments").pick_folder() {
                 for a in atts {
                     let path = dir.join(crate::compose::safe_file_name(&a.name));
-                    app.send(mailcraft_sync::Command::SaveAttachment { message_id: a.message_id.clone(), attachment_id: a.id.clone(), path, open: false });
+                    app.send(mailwright_sync::Command::SaveAttachment { message_id: a.message_id.clone(), attachment_id: a.id.clone(), path, open: false });
                 }
             }
         }
@@ -150,7 +150,7 @@ fn message_view(app: &mut MailApp, ui: &mut Ui, r: &Reading, in_pane: bool) -> V
                         ui.label(egui::RichText::new(format!("<{}>", m.from.address)).color(t.text_dim));
                     }
                 });
-                let line = |label: &str, list: &[mailcraft_store::Addr]| -> String { format!("{label}: {}", list.iter().map(|a| a.label().to_string()).collect::<Vec<_>>().join("; ")) };
+                let line = |label: &str, list: &[mailwright_store::Addr]| -> String { format!("{label}: {}", list.iter().map(|a| a.label().to_string()).collect::<Vec<_>>().join("; ")) };
                 if !m.to.is_empty() {
                     ui.add(egui::Label::new(egui::RichText::new(line("To", &m.to)).color(t.text_dim).font(regular(12.0))).wrap()).on_hover_text(m.to.iter().map(|a| a.full()).collect::<Vec<_>>().join("\n"));
                 }
@@ -388,7 +388,7 @@ pub fn reader_windows(app: &mut MailApp, ctx: &egui::Context) {
         let Some(row) = app.session().and_then(|s| s.store.message(&mid).ok().flatten()) else { continue };
         let title = if row.subject.is_empty() { "(no subject)".to_string() } else { row.subject.clone() };
         let attachments = app.session().map(|s| s.store.attachments(&mid).unwrap_or_default()).unwrap_or_default();
-        let doc = row.body.as_deref().map(mailcraft_html::parse);
+        let doc = row.body.as_deref().map(mailwright_html::parse);
         let reading = Reading { row, doc, attachments, event: None, allow_remote: app.settings.remote_images, requested: true, opened_at: std::time::Instant::now() };
         let mut open = true;
         let mut acts = Vec::new();

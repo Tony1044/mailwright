@@ -20,7 +20,7 @@ impl Addr {
     pub fn full(&self) -> String {
         if self.name.trim().is_empty() || self.name == self.address { self.address.clone() } else { format!("{} <{}>", self.name, self.address) }
     }
-    pub fn from_graph(r: &mailcraft_graph::types::Recipient) -> Addr {
+    pub fn from_graph(r: &mailwright_graph::types::Recipient) -> Addr {
         Addr { name: r.email_address.name.clone().unwrap_or_default(), address: r.email_address.address.clone().unwrap_or_default() }
     }
     pub fn to_graph(&self) -> serde_json::Value {

@@ -2,7 +2,7 @@
 //!
 //! [`parse`] turns a message body into [`Block`]s of styled [`Inline`] runs: paragraphs,
 //! headings, list items, quotes, rules, preformatted text, tables and images. Scripts, styles,
-//! forms and hidden elements are dropped; links are kept as text with a target (MailCraft shows
+//! forms and hidden elements are dropped; links are kept as text with a target (Mailwright shows
 //! where a link goes before opening it); images are `cid:` (attached), `data:` or remote, and
 //! remote ones are only fetched when the user asks, as in Outlook.
 //!

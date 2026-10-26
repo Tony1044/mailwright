@@ -6,7 +6,7 @@ use std::sync::Arc;
 use egui::{Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Stroke, Visuals};
 use serde::{Deserialize, Serialize};
 
-/// MailCraft's app colour, and a darker ink of it for text on light backgrounds.
+/// Mailwright's app colour, and a darker ink of it for text on light backgrounds.
 pub const APP_COLOR: Color32 = Color32::from_rgb(0x0F, 0x6C, 0xBD);
 pub const APP_INK: Color32 = Color32::from_rgb(0x0C, 0x5A, 0x9E);
 

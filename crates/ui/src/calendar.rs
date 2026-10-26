@@ -4,8 +4,8 @@ use std::collections::HashSet;
 
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveTime, TimeZone};
 use egui::{Align2, Color32, Rect, Sense, Stroke, Ui, pos2, vec2};
-use mailcraft_store::{Action, CalendarRow, EventRow, Store};
-use mailcraft_sync::{Command, SyncHandle};
+use mailwright_store::{Action, CalendarRow, EventRow, Store};
+use mailwright_sync::{Command, SyncHandle};
 
 use crate::app::MailApp;
 use crate::settings::{CalendarView, Settings};
@@ -196,7 +196,7 @@ pub fn event_color(e: &EventRow, cals: &[CalendarRow], t: &Tokens) -> Color32 {
     }
     cals.iter()
         .find(|c| c.id == e.calendar_id)
-        .and_then(|c| mailcraft_html::parse_color(&c.color))
+        .and_then(|c| mailwright_html::parse_color(&c.color))
         .map(|c| Color32::from_rgb(c[0], c[1], c[2]))
         .unwrap_or(t.accent)
 }
@@ -234,7 +234,7 @@ pub fn view(app: &mut MailApp, ui: &mut Ui) {
                         }
                         app.cal.dirty = true;
                     }
-                    let col = mailcraft_html::parse_color(&c.color).map(|c| Color32::from_rgb(c[0], c[1], c[2])).unwrap_or(t.accent);
+                    let col = mailwright_html::parse_color(&c.color).map(|c| Color32::from_rgb(c[0], c[1], c[2])).unwrap_or(t.accent);
                     let (r, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
                     ui.painter().rect_filled(r, 2.0, col);
                     ui.label(&c.name);

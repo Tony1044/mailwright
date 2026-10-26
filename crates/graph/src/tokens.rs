@@ -8,7 +8,10 @@ use std::sync::Mutex;
 
 use crate::error::GraphError;
 
-const SERVICE: &str = "MailCraft";
+const SERVICE: &str = "Mailwright";
+/// The name sign-ins were saved under before the app was renamed (spelt out in pieces so a
+/// rename of the source leaves it alone).
+const OLD_SERVICE: &str = concat!("Mail", "Craft");
 
 pub trait TokenStore: Send + Sync {
     fn load(&self, account: &str) -> Result<Option<String>, GraphError>;
@@ -39,7 +42,7 @@ impl SystemTokenStore {
 
     fn keyring_works(&self) -> bool {
         // A probe entry: some Linux sessions have no Secret Service at all.
-        match Self::entry("mailcraft-probe") {
+        match Self::entry("mailwright-probe") {
             Ok(e) => !matches!(e.get_password(), Err(keyring::Error::PlatformFailure(_)) | Err(keyring::Error::NoStorageAccess(_))),
             Err(_) => false,
         }
@@ -51,7 +54,18 @@ impl TokenStore for SystemTokenStore {
         if let Ok(e) = Self::entry(account) {
             match e.get_password() {
                 Ok(t) => return Ok(Some(t)),
-                Err(keyring::Error::NoEntry) => {}
+                Err(keyring::Error::NoEntry) => {
+                    // Saved under the old name: move it across, so nobody has to sign in again.
+                    if OLD_SERVICE != SERVICE
+                        && let Ok(old) = keyring::Entry::new(OLD_SERVICE, account)
+                        && let Ok(t) = old.get_password()
+                    {
+                        if e.set_password(&t).is_ok() {
+                            let _ = old.delete_credential();
+                        }
+                        return Ok(Some(t));
+                    }
+                }
                 Err(err) => log::warn!("credential store: {err}"),
             }
         }

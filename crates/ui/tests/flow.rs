@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use mailcraft_ui::{MailApp, Settings};
+use mailwright_ui::{MailApp, Settings};
 
 fn pump(app: &mut MailApp, ctx: &egui::Context, ms: u64, until: impl Fn(&MailApp) -> bool) -> bool {
     let end = Instant::now() + Duration::from_millis(ms);
@@ -23,7 +23,7 @@ fn pump(app: &mut MailApp, ctx: &egui::Context, ms: u64, until: impl Fn(&MailApp
 
 #[test]
 fn reply_flag_move_and_calendar_through_the_interface() {
-    let data = std::env::temp_dir().join(format!("mailcraft-ui-flow-{}", std::process::id()));
+    let data = std::env::temp_dir().join(format!("mailwright-ui-flow-{}", std::process::id()));
     let mut app = MailApp::new(Settings::default(), None, Some(data.clone()));
     let ctx = egui::Context::default();
     pump(&mut app, &ctx, 200, |_| false);
@@ -53,7 +53,7 @@ fn reply_flag_move_and_calendar_through_the_interface() {
     assert!(pump(&mut app, &ctx, 10_000, |a| a.demo.as_ref().unwrap().state().messages.iter().any(|m| m.folder == "AAMkArchive" && m.props["flag"]["flagStatus"] == "flagged")));
 
     // A new appointment.
-    app.set_view(mailcraft_ui::View::Calendar);
+    app.set_view(mailwright_ui::View::Calendar);
     app.new_event(false, None);
     app.editors[0].subject = "Dentist".into();
     app.editors[0].open = true;
@@ -74,8 +74,8 @@ fn save_first_editor(app: &mut MailApp, _ctx: &egui::Context) {
 
 #[test]
 fn two_accounts_side_by_side() {
-    use mailcraft_graph::tokens::{MemoryTokenStore, TokenStore};
-    let data = std::env::temp_dir().join(format!("mailcraft-ui-two-{}", std::process::id()));
+    use mailwright_graph::tokens::{MemoryTokenStore, TokenStore};
+    let data = std::env::temp_dir().join(format!("mailwright-ui-two-{}", std::process::id()));
     let mut app = MailApp::new(Settings::default(), None, Some(data.clone()));
     let ctx = egui::Context::default();
     pump(&mut app, &ctx, 100, |_| false);
@@ -84,7 +84,7 @@ fn two_accounts_side_by_side() {
 
     // A second mailbox on its own server.
     let other = mockgraph::MockGraph::start_as("Jo Bloggs", "jo@m365.example").unwrap();
-    let acc = mailcraft_graph::AccountConfig {
+    let acc = mailwright_graph::AccountConfig {
         client_id: "1b2c3d4e-0000-1111-2222-333344445555".into(),
         tenant: "m365.example".into(),
         username: "jo@m365.example".into(),
@@ -94,7 +94,7 @@ fn two_accounts_side_by_side() {
     };
     let store: std::sync::Arc<dyn TokenStore> = std::sync::Arc::new(MemoryTokenStore::default());
     store.save("jo@m365.example", &other.grant_refresh_token()).unwrap();
-    let client = mailcraft_graph::GraphClient::from_saved(acc.clone(), store).unwrap();
+    let client = mailwright_graph::GraphClient::from_saved(acc.clone(), store).unwrap();
     let i = app.start_session(acc, false, Some(Box::new(client))).unwrap();
     assert_eq!(i, 1);
     assert!(pump(&mut app, &ctx, 15_000, |a| a.sessions.len() == 2 && a.sessions.iter().all(|s| !s.folders.is_empty())), "both trees load");
@@ -116,7 +116,7 @@ fn two_accounts_side_by_side() {
     assert!(app.demo.as_ref().unwrap().state().sent.is_empty());
 
     // The calendar shows both accounts.
-    app.set_view(mailcraft_ui::View::Calendar);
+    app.set_view(mailwright_ui::View::Calendar);
     assert!(pump(&mut app, &ctx, 10_000, |a| a.cal.calendars.len() == 2));
 
     // Removing one leaves the other.

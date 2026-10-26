@@ -1,10 +1,10 @@
-//! Microsoft Graph for MailCraft.
+//! Microsoft Graph for Mailwright.
 //!
 //! - [`auth`]: signing in to Microsoft Entra ID (Exchange Online) as a public client: the
 //!   authorization code flow with PKCE through the system browser and a loopback redirect, or the
 //!   device code flow; refreshing tokens.
 //! - [`tokens`]: keeping the refresh token in the operating system's credential store.
-//! - [`client`]: the Graph calls MailCraft makes (mail folders, messages with delta sync, sending,
+//! - [`client`]: the Graph calls Mailwright makes (mail folders, messages with delta sync, sending,
 //!   attachments, calendars and events), with paging, token refresh and throttling handled.
 //! - [`types`]: the Graph JSON shapes.
 //!

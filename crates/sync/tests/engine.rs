@@ -6,10 +6,10 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
-use mailcraft_graph::tokens::{MemoryTokenStore, TokenStore};
-use mailcraft_graph::{AccountConfig, GraphClient};
-use mailcraft_store::{Action, Addr, Compose, ListFilter, OutAttachment, SortBy, Store};
-use mailcraft_sync::{Command, SyncHandle, Update};
+use mailwright_graph::tokens::{MemoryTokenStore, TokenStore};
+use mailwright_graph::{AccountConfig, GraphClient};
+use mailwright_store::{Action, Addr, Compose, ListFilter, OutAttachment, SortBy, Store};
+use mailwright_sync::{Command, SyncHandle, Update};
 use mockgraph::MockGraph;
 
 struct Rig {
@@ -24,11 +24,11 @@ struct Rig {
 impl Rig {
     fn new(name: &str) -> Rig {
         let mock = MockGraph::start().unwrap();
-        let dir = std::env::temp_dir().join(format!("mailcraft-sync-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mailwright-sync-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let db = dir.join("cache.sqlite");
-        let (sync, rx) = mailcraft_sync::start(db.clone(), 90, Arc::new(|| {})).unwrap();
+        let (sync, rx) = mailwright_sync::start(db.clone(), 90, Arc::new(|| {})).unwrap();
         let rig = Rig { sync, rx, mock, db, dir };
         let client = rig.client();
         rig.sync.send(Command::Attach(Box::new(client)));
@@ -256,7 +256,7 @@ fn people_search_and_calendar_edits() {
         body: serde_json::json!({"subject": "Planning", "start": {"dateTime": "2026-11-03T10:00:00", "timeZone": "UTC"}, "end": {"dateTime": "2026-11-03T11:00:00", "timeZone": "UTC"}}),
     }));
     rig.wait(|u| matches!(u, Update::Queued(0)));
-    let t = |x: &str| mailcraft_store::parse_time(x).unwrap();
+    let t = |x: &str| mailwright_store::parse_time(x).unwrap();
     let evs = s.events(t("2026-11-03T00:00:00Z"), t("2026-11-04T00:00:00Z")).unwrap();
     let planning = evs.iter().find(|e| e.subject == "Planning").unwrap();
     assert!(!planning.local);
@@ -276,4 +276,37 @@ fn a_revoked_sign_in_asks_to_sign_in_again() {
     rig.mock.revoke_refresh_tokens();
     rig.sync.send(Command::SyncAll);
     rig.wait(|u| matches!(u, Update::SignInRequired(_)));
+}
+
+#[test]
+fn a_change_the_server_keeps_refusing_never_holds_up_new_mail() {
+    let rig = Rig::new("stuck");
+    let s = rig.store();
+    let inbox_id = inbox(&s);
+    let first = s.messages(&inbox_id, ListFilter::All, SortBy::Date, false, "").unwrap()[0].id.clone();
+    rig.mock.state().refuse_message_changes = true;
+    rig.sync.send(Command::Do(Action::SetFlag { id: first, status: "flagged".into() }));
+    {
+        let mut st = rig.mock.state();
+        let props = serde_json::Map::from_iter([
+            ("subject".to_string(), serde_json::json!("Arrives anyway")),
+            ("from".to_string(), serde_json::json!({"emailAddress": {"name": "Sam Lee", "address": "sam@example.com"}})),
+            ("receivedDateTime".to_string(), serde_json::json!(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string())),
+            ("isRead".to_string(), serde_json::json!(false)),
+        ]);
+        st.deliver("inbox", props, "<p>Hello</p>", vec![]);
+    }
+    rig.sync.send(Command::SyncAll);
+    let seen = rig.wait(|u| matches!(u, Update::NewMail(_)));
+    let Some(Update::NewMail(list)) = seen.last() else { unreachable!() };
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].subject, "Arrives anyway");
+    assert_eq!(list[0].from, "Sam Lee");
+    assert!(s.messages(&inbox_id, ListFilter::All, SortBy::Date, false, "").unwrap().iter().any(|m| m.subject == "Arrives anyway"));
+    assert_eq!(s.queued_count().unwrap(), 1, "the refused change waits for a later round");
+    // Once the server takes changes again, it goes through.
+    rig.mock.state().refuse_message_changes = false;
+    rig.sync.send(Command::SyncAll);
+    rig.wait(|u| matches!(u, Update::Queued(0)));
+    assert_eq!(s.queued_count().unwrap(), 0);
 }

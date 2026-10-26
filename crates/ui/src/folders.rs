@@ -1,7 +1,7 @@
 //! The folder pane: Favorites, the mailbox's folder tree, and the navigation bar (Mail, Calendar).
 
 use egui::{Align2, Rect, Sense, Ui, pos2, vec2};
-use mailcraft_store::FolderRow;
+use mailwright_store::FolderRow;
 
 use crate::app::{Confirm, MailApp, View};
 use crate::icons;
@@ -261,7 +261,7 @@ fn folder_row(app: &mut MailApp, ui: &mut Ui, acct: usize, f: &FolderRow, depth:
         }
         if widgets::menu_item(ui, "update_folder", "Update Folder", "").clicked() {
             let owner = acct;
-            app.send_to(owner, mailcraft_sync::Command::SyncFolder(fid.clone()));
+            app.send_to(owner, mailwright_sync::Command::SyncFolder(fid.clone()));
             ui.close();
         }
     });
@@ -303,7 +303,7 @@ impl MailApp {
             self.tab = 1;
             if v == View::Calendar {
                 self.cal.dirty = true;
-                let syncs: Vec<&mailcraft_sync::SyncHandle> = self.sessions.iter().map(|s| &s.sync).collect();
+                let syncs: Vec<&mailwright_sync::SyncHandle> = self.sessions.iter().map(|s| &s.sync).collect();
                 self.cal.request_window(&syncs, &self.settings);
             }
         }

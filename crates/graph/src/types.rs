@@ -1,4 +1,4 @@
-//! Microsoft Graph v1.0 resources, as much of each as MailCraft uses. Every field is optional on
+//! Microsoft Graph v1.0 resources, as much of each as Mailwright uses. Every field is optional on
 //! the way in (`#[serde(default)]`): Graph omits what wasn't selected, and a missing field must
 //! never fail a whole sync.
 
@@ -234,7 +234,7 @@ pub struct Event {
     pub reminder_minutes_before_start: Option<i64>,
     pub is_reminder_on: Option<bool>,
     pub web_link: Option<String>,
-    /// Filled in by MailCraft from the calendar the event was fetched from.
+    /// Filled in by Mailwright from the calendar the event was fetched from.
     #[serde(skip)]
     pub calendar_id: String,
     #[serde(rename = "@removed", skip_serializing_if = "Option::is_none")]

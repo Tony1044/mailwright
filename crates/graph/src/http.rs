@@ -23,10 +23,14 @@ pub fn agent() -> &'static Agent {
             .http_status_as_error(false)
             .timeout_connect(Some(Duration::from_secs(20)))
             .timeout_send_request(Some(Duration::from_secs(30)))
-            // Waiting for the server to start answering; big downloads and uploads take as
-            // long as they take.
+            // Waiting for the server to start answering, then for the rest of the answer. A
+            // connection that dies part-way (sleep, Wi-Fi, VPN) must never wait for ever, or
+            // syncing stops for good; attachment transfers get longer limits of their own.
             .timeout_recv_response(Some(Duration::from_secs(90)))
-            .user_agent(concat!("MailCraft/", env!("CARGO_PKG_VERSION")))
+            .timeout_recv_body(Some(Duration::from_secs(120)))
+            .timeout_send_body(Some(Duration::from_secs(120)))
+            .timeout_global(Some(Duration::from_secs(300)))
+            .user_agent(concat!("Mailwright/", env!("CARGO_PKG_VERSION")))
             .tls_config(tls)
             .build()
             .into()
@@ -55,3 +59,6 @@ pub fn read_bytes(resp: &mut ureq::http::Response<ureq::Body>, url: &str, limit:
 pub fn retry_after(resp: &ureq::http::Response<ureq::Body>) -> Option<u64> {
     resp.headers().get("Retry-After").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<u64>().ok()).map(|s| s.min(120))
 }
+
+/// Limits for a big transfer (an attachment): an hour all told.
+pub const LONG: Duration = Duration::from_secs(3600);

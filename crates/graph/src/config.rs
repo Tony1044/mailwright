@@ -1,19 +1,19 @@
 use serde::{Deserialize, Serialize};
 
 /// The public Microsoft endpoints. Overridable for testing against a mock server with the
-/// `MAILCRAFT_LOGIN_BASE` and `MAILCRAFT_GRAPH_BASE` environment variables.
+/// `MAILWRIGHT_LOGIN_BASE` and `MAILWRIGHT_GRAPH_BASE` environment variables.
 pub const LOGIN_BASE: &str = "https://login.microsoftonline.com";
 pub const GRAPH_BASE: &str = "https://graph.microsoft.com/v1.0";
 
-/// The app registration built into this copy of MailCraft (set with `MAILCRAFT_CLIENT_ID` when
+/// The app registration built into this copy of Mailwright (set with `MAILWRIGHT_CLIENT_ID` when
 /// building): a multi-tenant registration, so users only ever type their email address.
-pub const BUILTIN_CLIENT_ID: Option<&str> = match option_env!("MAILCRAFT_CLIENT_ID") {
+pub const BUILTIN_CLIENT_ID: Option<&str> = match option_env!("MAILWRIGHT_CLIENT_ID") {
     Some(id) => Some(id),
-    None => Some(MAILCRAFT_APP_ID),
+    None => Some(MAILWRIGHT_APP_ID),
 };
 
-/// MailCraft's multi-tenant app registration (any Entra ID tenant and personal Microsoft accounts).
-pub const MAILCRAFT_APP_ID: &str = "6b43e75b-9b99-4d73-8575-390390a86137";
+/// Mailwright's multi-tenant app registration (any Entra ID tenant and personal Microsoft accounts).
+pub const MAILWRIGHT_APP_ID: &str = "6b43e75b-9b99-4d73-8575-390390a86137";
 
 /// The client ID to use: an override (an organisation's own registration), else the built-in one.
 pub fn client_id(override_id: &str) -> Option<String> {
@@ -21,10 +21,10 @@ pub fn client_id(override_id: &str) -> Option<String> {
     if is_guid(o) {
         return Some(o.to_string());
     }
-    std::env::var("MAILCRAFT_CLIENT_ID").ok().filter(|v| is_guid(v.trim())).or(BUILTIN_CLIENT_ID.map(str::to_string)).filter(|v| is_guid(v.trim()))
+    std::env::var("MAILWRIGHT_CLIENT_ID").ok().filter(|v| is_guid(v.trim())).or(BUILTIN_CLIENT_ID.map(str::to_string)).filter(|v| is_guid(v.trim()))
 }
 
-/// Delegated permissions MailCraft asks for. All are user-consentable in a default tenant;
+/// Delegated permissions Mailwright asks for. All are user-consentable in a default tenant;
 /// an organisation that requires admin consent grants them once for everyone.
 pub const SCOPES: &[&str] = &[
     "offline_access",
@@ -59,11 +59,11 @@ pub struct AccountConfig {
 
 impl AccountConfig {
     pub fn login_base(&self) -> String {
-        self.login_base.clone().or_else(|| std::env::var("MAILCRAFT_LOGIN_BASE").ok()).unwrap_or_else(|| LOGIN_BASE.to_string())
+        self.login_base.clone().or_else(|| std::env::var("MAILWRIGHT_LOGIN_BASE").ok()).unwrap_or_else(|| LOGIN_BASE.to_string())
     }
 
     pub fn graph_base(&self) -> String {
-        self.graph_base.clone().or_else(|| std::env::var("MAILCRAFT_GRAPH_BASE").ok()).unwrap_or_else(|| GRAPH_BASE.to_string())
+        self.graph_base.clone().or_else(|| std::env::var("MAILWRIGHT_GRAPH_BASE").ok()).unwrap_or_else(|| GRAPH_BASE.to_string())
     }
 
     pub fn tenant_or_default(&self) -> &str {

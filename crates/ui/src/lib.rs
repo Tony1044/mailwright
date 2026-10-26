@@ -1,4 +1,4 @@
-//! MailCraft's interface: a classic desktop mail and calendar client, in egui.
+//! Mailwright's interface: a classic desktop mail and calendar client, in egui.
 //!
 //! [`MailApp`] holds the state; [`MailApp::logic`] handles sync updates, helper threads and
 //! shortcuts; [`MailApp::ui`] draws the window: title row, ribbon, folder pane, message list,
@@ -19,6 +19,7 @@ mod folders;
 pub mod icons;
 mod keys;
 pub mod list;
+pub mod notify;
 mod reading;
 pub mod render;
 mod ribbon;

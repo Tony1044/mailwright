@@ -17,9 +17,9 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
-use mailcraft_graph::client::{EventResponse, ReplyKind};
-use mailcraft_graph::{GraphClient, GraphError};
-use mailcraft_store::{Action, Addr, Compose, QueuedAction, Store};
+use mailwright_graph::client::{EventResponse, ReplyKind};
+use mailwright_graph::{GraphClient, GraphError};
+use mailwright_store::{Action, Addr, Compose, QueuedAction, Store};
 use serde_json::json;
 
 /// Folders always kept in step, by well-known name.
@@ -69,6 +69,8 @@ pub enum Update {
     SearchResults(String, Vec<String>),
     AttachmentSaved { path: PathBuf, open: bool },
     Sent(String),
+    /// Mail that arrived in the Inbox since the last round (not on the first sync).
+    NewMail(Vec<NewMail>),
     /// A draft reached the server: the compose window with this local id now edits that draft.
     DraftSaved { local_id: String, draft_id: String },
     /// Something went wrong that the user should see.
@@ -76,6 +78,19 @@ pub enum Update {
     SignInRequired(String),
     SignedOut,
 }
+
+/// One newly arrived message, for the notification.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewMail {
+    pub id: String,
+    pub from: String,
+    pub subject: String,
+    pub preview: String,
+    pub focused: bool,
+}
+
+/// After this many failed tries a queued change is given up on, so it can't hold up the rest.
+const MAX_ATTEMPTS: i64 = 8;
 
 pub struct SyncHandle {
     tx: Sender<Command>,
@@ -104,7 +119,7 @@ pub type Wake = Arc<dyn Fn() + Send + Sync>;
 pub fn start(db: PathBuf, window_days: i64, wake: Wake) -> std::io::Result<(SyncHandle, Receiver<Update>)> {
     let (tx, rx) = mpsc::channel();
     let (utx, urx) = mpsc::channel();
-    let thread = std::thread::Builder::new().name("mailcraft-sync".into()).spawn(move || {
+    let thread = std::thread::Builder::new().name("mailwright-sync".into()).spawn(move || {
         let store = match Store::open(&db) {
             Ok(s) => s,
             Err(e) => {
@@ -241,6 +256,11 @@ impl Engine {
                     Err(RecvTimeoutError::Disconnected) => return,
                 }
             } else {
+                let interval = if self.connected { 60 } else { 30 };
+                if self.last_round.is_none_or(|t| t.elapsed() >= Duration::from_secs(interval)) {
+                    self.round(false);
+                    continue;
+                }
                 match rx.try_recv() {
                     Ok(c) => Some(c),
                     Err(TryRecvError::Empty) => None,
@@ -458,7 +478,8 @@ impl Engine {
         if manual {
             self.status("Sending and receiving\u{2026}");
         }
-        if !self.flush() {
+        let started = Instant::now();
+        if !self.flush() && !self.online() {
             return;
         }
         let tree_due = self.last_tree.is_none_or(|t| t.elapsed() > Duration::from_secs(300)) || manual;
@@ -477,6 +498,7 @@ impl Engine {
             }
         for f in folders {
             if !self.delta(&f) {
+                log::info!("round stopped after {:.1}s", started.elapsed().as_secs_f32());
                 return;
             }
         }
@@ -488,6 +510,7 @@ impl Engine {
         for id in self.store.missing_bodies(&core, since, 150).unwrap_or_default() {
             self.bg.push_back(Bg::Body(id));
         }
+        log::info!("round done in {:.1}s", started.elapsed().as_secs_f32());
         if self.online() {
             let when = chrono::Local::now().format("%H:%M");
             self.status(format!("All folders are up to date. Last updated {when}."));
@@ -551,6 +574,8 @@ impl Engine {
         let mut link = saved.clone();
         let mut changed = 0usize;
         let mut pages = 0;
+        let is_inbox = self.store.folder_by_well_known("inbox").ok().flatten().as_deref() == Some(folder);
+        let mut arrived: Vec<NewMail> = Vec::new();
         loop {
             let page = match c.messages_delta(folder, link.as_deref(), if link.is_none() { Some(&since) } else { None }) {
                 Ok(p) => p,
@@ -571,24 +596,50 @@ impl Engine {
             pages += 1;
             self.set_connected(true);
             changed += page.changed.len() + page.removed.len();
-            if !page.changed.is_empty() {
-                let _ = self.store.upsert_messages(folder, &page.changed);
+            let fresh: std::collections::HashSet<String> = if is_inbox && !first {
+                let ids: Vec<String> = page.changed.iter().map(|m| m.id.clone()).collect();
+                let known = self.store.known_ids(&ids).unwrap_or_default();
+                ids.into_iter().filter(|i| !known.contains(i)).collect()
+            } else {
+                Default::default()
+            };
+            let saved_ok = (page.changed.is_empty() || self.store.upsert_messages(folder, &page.changed).map_err(|e| log::error!("saving mail in {folder}: {e}")).is_ok())
+                && (page.removed.is_empty() || self.store.remove_messages(folder, &page.removed).map_err(|e| log::error!("removing mail in {folder}: {e}")).is_ok());
+            if !saved_ok {
+                // Keep the old sync point, so the next round asks for these again.
+                self.emit(Update::Error("Couldn't save new mail to the offline cache. Trying again shortly.".into()));
+                return true;
             }
-            if !page.removed.is_empty() {
-                let _ = self.store.remove_messages(folder, &page.removed);
+            for m in page.changed.iter().filter(|m| fresh.contains(&m.id) && m.is_read != Some(true) && m.is_draft != Some(true)) {
+                let from = m.from.as_ref().or(m.sender.as_ref()).map(mailwright_store::Addr::from_graph).unwrap_or_default();
+                arrived.push(NewMail {
+                    id: m.id.clone(),
+                    from: from.label().to_string(),
+                    subject: m.subject.clone().unwrap_or_default(),
+                    preview: m.body_preview.clone().unwrap_or_default(),
+                    focused: m.inference_classification.as_deref() != Some("other"),
+                });
             }
             if first && (page.next_link.is_some() || pages > 1) {
                 // A big folder fills in page by page.
                 self.emit(Update::MessagesChanged);
             }
             if let Some(d) = page.delta_link {
-                let _ = self.store.set_delta_link(folder, Some(&d));
+                if let Err(e) = self.store.set_delta_link(folder, Some(&d)) {
+                    log::error!("saving the sync point for {folder}: {e}");
+                }
                 break;
             }
             match page.next_link {
                 Some(n) => link = Some(n),
                 None => break,
             }
+        }
+        if changed > 0 {
+            log::info!("{folder}: {changed} changes, {} new", arrived.len());
+        }
+        if !arrived.is_empty() {
+            self.emit(Update::NewMail(arrived));
         }
         if changed > 0 || first {
             if let Some(c) = self.client.clone()
@@ -777,11 +828,17 @@ impl Engine {
                     touched_mail |= q.action.message_id().is_some() || matches!(q.action, Action::Send { .. } | Action::SaveDraft { .. } | Action::RespondEvent { .. });
                     touched_calendar |= matches!(q.action, Action::CreateEvent { .. } | Action::UpdateEvent { .. } | Action::DeleteEvent { .. } | Action::CancelEvent { .. } | Action::RespondEvent { .. });
                 }
-                Err(e) if matches!(e, GraphError::Network { .. } | GraphError::SignInRequired(_)) || e.is_transient() => {
+                Err(e) if matches!(e, GraphError::Network { .. } | GraphError::SignInRequired(_)) => {
                     let _ = self.store.failed(&q, &e.to_string());
                     self.trouble(&e);
                     self.queued_count();
                     return false;
+                }
+                Err(e) if e.is_transient() && q.attempts + 1 < MAX_ATTEMPTS => {
+                    // Busy or throttled: leave it (and what follows it) for the next round, and carry on receiving.
+                    log::warn!("{} will be retried: {e}", q.action.describe());
+                    let _ = self.store.failed(&q, &e.to_string());
+                    break;
                 }
                 Err(e) if e.is_not_found() && q.action.message_id().is_some() => {
                     // The message is already gone on the server; nothing to do.
@@ -817,7 +874,7 @@ fn move_folder(c: &GraphClient, id: &str, dest: &str) -> Result<(), GraphError> 
 struct Outcome {
     renamed: Option<(String, String)>,
     draft_id: Option<String>,
-    event: Option<mailcraft_graph::types::Event>,
+    event: Option<mailwright_graph::types::Event>,
 }
 
 fn compose_patch(compose: &Compose, include_body: bool) -> serde_json::Value {

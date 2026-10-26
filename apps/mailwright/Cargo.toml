@@ -1,16 +1,16 @@
 [package]
-name = "mailcraft"
+name = "mailwright"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "MailCraft: mail and calendar for Microsoft 365 (Exchange Online, through Microsoft Graph)"
+description = "Mailwright: mail and calendar for Microsoft 365 (Exchange Online, through Microsoft Graph)"
 
 [lints]
 workspace = true
 
 [dependencies]
-mailcraft-ui = { workspace = true }
+mailwright-ui = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
 log = { workspace = true }
@@ -19,9 +19,9 @@ chrono = { workspace = true }
 pollster = "0.4"
 open = { workspace = true }
 
-# Linux: MailCraft's own sign-in window (WebKitGTK), run as a separate process so the web view and
+# Linux: Mailwright's own sign-in window (WebKitGTK), run as a separate process so the web view and
 # its event loop never share the main window's. Windows uses an Edge app window instead, which
-# needs no WebView2 loader DLL beside mailcraft.exe.
+# needs no WebView2 loader DLL beside mailwright.exe.
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 wry = "0.57"
 tao = "0.37"

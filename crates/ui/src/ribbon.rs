@@ -1,7 +1,7 @@
 //! The ribbon: File, Home, Send / Receive, Folder and View, for mail and for the calendar.
 
 use egui::{Ui, vec2};
-use mailcraft_store::{ListFilter, SortBy};
+use mailwright_store::{ListFilter, SortBy};
 
 use crate::app::{Backstage, Confirm, MailApp, View};
 use crate::settings::{CalendarView, ReadingPane};
@@ -124,7 +124,7 @@ fn mail_home(app: &mut MailApp, ui: &mut Ui) {
 pub fn move_menu(app: &mut MailApp, ui: &mut Ui) {
     ui.set_min_width(220.0);
     let folders = app.mail.folders.clone();
-    let depth = |f: &mailcraft_store::FolderRow| {
+    let depth = |f: &mailwright_store::FolderRow| {
         let mut d = 0;
         let mut p = f.parent_id.clone();
         while let Some(pid) = p {
@@ -213,7 +213,7 @@ fn send_receive(app: &mut MailApp, ui: &mut Ui) {
         let folder = app.mail.folder.clone();
         if big(ui, "update_folder", "Update\nFolder", folder.is_some(), false, false).on_hover_text("Shift+F9").clicked() {
             if let Some(f) = folder {
-                app.send(mailcraft_sync::Command::SyncFolder(f));
+                app.send(mailwright_sync::Command::SyncFolder(f));
             }
         }
         let queued = app.session().map(|s| s.queued).unwrap_or(0);
@@ -234,7 +234,7 @@ fn send_receive(app: &mut MailApp, ui: &mut Ui) {
                 if ui.selectable_label(app.settings.offline_days == d, label).clicked() {
                     app.settings.offline_days = d;
                     app.save_settings();
-                    app.send(mailcraft_sync::Command::SetWindow(d));
+                    app.send(mailwright_sync::Command::SetWindow(d));
                     ui.close();
                 }
             }

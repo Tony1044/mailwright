@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>ai.storyteller.mailcraft</id>
-  <name>MailCraft</name>
+  <id>ai.storyteller.mailwright</id>
+  <name>Mailwright</name>
   <summary>Mail and calendar for Microsoft 365</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT OR Apache-2.0</project_license>
   <description>
     <p>A classic desktop mail and calendar client for Exchange Online, through Microsoft Graph: folders, a message list with Focused Inbox, a reading pane, compose, reply and forward with attachments, search, flags and categories, and a day, week and month calendar with meeting responses. Recent mail is kept on the computer for reading and searching offline.</p>
   </description>
-  <launchable type="desktop-id">ai.storyteller.mailcraft.desktop</launchable>
+  <launchable type="desktop-id">ai.storyteller.mailwright.desktop</launchable>
   <categories><category>Office</category><category>Email</category></categories>
 </component>

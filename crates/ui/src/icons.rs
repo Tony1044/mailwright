@@ -1,4 +1,4 @@
-//! MailCraft's icons, drawn in code on a 20×20 grid (original artwork, no icon assets). Line work
+//! Mailwright's icons, drawn in code on a 20×20 grid (original artwork, no icon assets). Line work
 //! is in `c`; `a` is the accent.
 
 use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};

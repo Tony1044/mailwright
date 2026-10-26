@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use mailcraft_graph::AccountConfig;
+use mailwright_graph::AccountConfig;
 use serde::{Deserialize, Serialize};
 
 use crate::theme::Appearance;
@@ -79,6 +79,12 @@ pub struct Settings {
     pub folder_pane_width: f32,
     pub list_width: f32,
     pub show_bcc: bool,
+    /// When new mail arrives: play a sound.
+    pub new_mail_sound: bool,
+    /// When new mail arrives: show a desktop alert.
+    pub new_mail_alert: bool,
+    /// When new mail arrives: put an envelope on the taskbar icon until it's seen.
+    pub new_mail_envelope: bool,
 }
 
 impl Default for Settings {
@@ -113,16 +119,37 @@ impl Default for Settings {
             folder_pane_width: 230.0,
             list_width: 400.0,
             show_bcc: false,
+            new_mail_sound: true,
+            new_mail_alert: true,
+            new_mail_envelope: true,
         }
     }
 }
 
+/// The folder name under the system's config and data folders.
+pub const APP_FOLDER: &str = "Mailwright";
+
 pub fn config_dir() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(std::env::temp_dir).join("MailCraft")
+    dirs::config_dir().unwrap_or_else(std::env::temp_dir).join(APP_FOLDER)
 }
 
 pub fn data_dir() -> PathBuf {
-    dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join("MailCraft")
+    dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join(APP_FOLDER)
+}
+
+/// After the rename: move the settings and offline-mail folders across once, so accounts, mail
+/// and settings carry on as they were.
+pub fn migrate_old_folders() {
+    let old_name = concat!("Mail", "Craft");
+    for base in [dirs::config_dir(), dirs::data_local_dir()].into_iter().flatten() {
+        let (old, new) = (base.join(old_name), base.join(APP_FOLDER));
+        if old != new && old.is_dir() && !new.exists() {
+            match std::fs::rename(&old, &new) {
+                Ok(()) => log::info!("moved {} to {}", old.display(), new.display()),
+                Err(e) => log::warn!("couldn't move {} to {}: {e}", old.display(), new.display()),
+            }
+        }
+    }
 }
 
 impl Settings {
@@ -133,7 +160,7 @@ impl Settings {
                 s.accounts.push(a);
             }
         }
-        if s.client_id_override.is_empty() && mailcraft_graph::config::is_guid(s.last_client_id.trim()) && mailcraft_graph::config::BUILTIN_CLIENT_ID.is_none() {
+        if s.client_id_override.is_empty() && mailwright_graph::config::is_guid(s.last_client_id.trim()) && mailwright_graph::config::BUILTIN_CLIENT_ID.is_none() {
             s.client_id_override = s.last_client_id.trim().to_string();
         }
         s

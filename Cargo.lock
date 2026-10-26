@@ -2856,15 +2856,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c41e0c4fef86961ac6d6f8a82609f55f31b05e4fce149ac5710e439df7619ba4"
 
 [[package]]
-name = "mailcraft"
-version = "0.1.0"
+name = "mac-notification-sys"
+version = "0.6.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd604973958ddcc11b561193c0fb96ba146506ef2f231ef2e7c35fd2cbc9beca"
+dependencies = [
+ "cc",
+ "log",
+ "objc2 0.6.5",
+ "objc2-foundation 0.3.2",
+ "time",
+ "uuid",
+]
+
+[[package]]
+name = "mailwright"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "dirs 6.0.0",
  "eframe",
  "egui",
  "log",
- "mailcraft-ui",
+ "mailwright-ui",
  "open",
  "pollster 0.4.0",
  "tao",
@@ -2873,8 +2887,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "mailcraft-graph"
-version = "0.1.0"
+name = "mailwright-graph"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2892,8 +2906,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "mailcraft-html"
-version = "0.1.0"
+name = "mailwright-html"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "ego-tree",
@@ -2901,12 +2915,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "mailcraft-store"
-version = "0.1.0"
+name = "mailwright-store"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "log",
- "mailcraft-graph",
+ "mailwright-graph",
  "rusqlite",
  "serde",
  "serde_json",
@@ -2914,21 +2928,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "mailcraft-sync"
-version = "0.1.0"
+name = "mailwright-sync"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
  "log",
- "mailcraft-graph",
- "mailcraft-store",
+ "mailwright-graph",
+ "mailwright-store",
  "mockgraph",
  "serde_json",
 ]
 
 [[package]]
-name = "mailcraft-ui"
-version = "0.1.0"
+name = "mailwright-ui"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2937,18 +2951,20 @@ dependencies = [
  "egui_kittest",
  "image",
  "log",
- "mailcraft-graph",
- "mailcraft-html",
- "mailcraft-store",
- "mailcraft-sync",
+ "mailwright-graph",
+ "mailwright-html",
+ "mailwright-store",
+ "mailwright-sync",
  "mime_guess",
  "mockgraph",
+ "notify-rust",
  "open",
  "rfd",
  "serde",
  "serde_json",
  "ureq",
  "wayland-sys",
+ "zbus 5.19.0",
 ]
 
 [[package]]
@@ -3046,7 +3062,7 @@ dependencies = [
 
 [[package]]
 name = "mockgraph"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3158,6 +3174,20 @@ name = "nohash-hasher"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
+
+[[package]]
+name = "notify-rust"
+version = "4.18.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4587364a9a0074333429b3df75a30a205340c56a536ca3eb6ca0e59b87bbf8af"
+dependencies = [
+ "futures-lite",
+ "log",
+ "mac-notification-sys",
+ "serde",
+ "tauri-winrt-notification",
+ "zbus 5.19.0",
+]
 
 [[package]]
 name = "num"
@@ -3489,6 +3519,7 @@ checksum = "e3e0adef53c21f888deb4fa59fc59f7eb17404926ee8a6f59f5df0fd7f9f3272"
 dependencies = [
  "bitflags 2.13.2",
  "block2 0.6.2",
+ "libc",
  "objc2 0.6.5",
  "objc2-core-foundation",
 ]
@@ -5073,6 +5104,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 
 [[package]]
+name = "tauri-winrt-notification"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f37a6c354fd28fc9e322ed9bd47e3959576dad28c9d58ea1cf888cce1c7ccb36"
+dependencies = [
+ "thiserror 2.0.21",
+ "windows",
+ "windows-version",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5488,6 +5530,7 @@ version = "1.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a0e2d11620c50695fe12bbbfde96b3477fe606e7284c22d505c12ce51214514"
 dependencies = [
+ "getrandom 0.4.3",
  "js-sys",
  "serde_core",
  "wasm-bindgen",

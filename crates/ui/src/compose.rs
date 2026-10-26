@@ -2,7 +2,7 @@
 
 use base64::Engine as _;
 use egui::{Context, Ui, vec2};
-use mailcraft_store::{Action, Addr, Compose, MessageRow, OutAttachment};
+use mailwright_store::{Action, Addr, Compose, MessageRow, OutAttachment};
 
 use crate::app::MailApp;
 use crate::theme::{Tokens, regular, semibold};
@@ -23,7 +23,7 @@ pub struct ComposeWin {
     pub body: String,
     /// The original, for replies and forwards (HTML, with its header).
     pub quoted: Option<String>,
-    pub quoted_doc: Option<mailcraft_html::Document>,
+    pub quoted_doc: Option<mailwright_html::Document>,
     pub show_quoted: bool,
     pub attachments: Vec<OutAttachment>,
     /// Attachments of a forwarded message, which go along with it.
@@ -99,7 +99,7 @@ fn strip_prefixes(subject: &str) -> String {
 
 /// The header Outlook puts above a quoted message.
 fn quote_header(m: &MessageRow) -> String {
-    let esc = mailcraft_html::escape;
+    let esc = mailwright_html::escape;
     let list = |l: &[Addr]| l.iter().map(|a| esc(&a.full())).collect::<Vec<_>>().join("; ");
     let when = crate::list::local(if m.received > 0 { m.received } else { m.sent }).format("%A, %-d %B %Y %H:%M").to_string();
     let mut h = format!(
@@ -199,9 +199,9 @@ impl MailApp {
             }
         }
         c.body = self.signature_text(true);
-        let original = m.body.clone().unwrap_or_else(|| mailcraft_store::text_to_html(&m.preview));
-        let quoted = format!("{}{}{}", mailcraft_html::head_styles(&original), quote_header(&m), mailcraft_html::body_inner(&original));
-        c.quoted_doc = Some(mailcraft_html::parse(&quoted));
+        let original = m.body.clone().unwrap_or_else(|| mailwright_store::text_to_html(&m.preview));
+        let quoted = format!("{}{}{}", mailwright_html::head_styles(&original), quote_header(&m), mailwright_html::body_inner(&original));
+        c.quoted_doc = Some(mailwright_html::parse(&quoted));
         c.quoted = Some(quoted);
         c.reply_to = Some((m.id.clone(), kind.to_string()));
         self.composes.push(c);
@@ -224,7 +224,7 @@ impl MailApp {
         c.show_bcc |= !m.bcc.is_empty();
         c.subject = m.subject.clone();
         c.importance = if m.importance.is_empty() { "normal".into() } else { m.importance.clone() };
-        c.body = m.body.as_deref().map(mailcraft_html::to_text).unwrap_or_else(|| m.preview.clone());
+        c.body = m.body.as_deref().map(mailwright_html::to_text).unwrap_or_else(|| m.preview.clone());
         c.focus = Some("body");
         self.composes.push(c);
     }
@@ -233,7 +233,7 @@ impl MailApp {
         let to = parse_recipients(&c.to)?;
         let cc = parse_recipients(&c.cc)?;
         let bcc = parse_recipients(&c.bcc)?;
-        let mut html = mailcraft_html::text_to_html(&c.body, &self.settings.compose_font, self.settings.compose_size);
+        let mut html = mailwright_html::text_to_html(&c.body, &self.settings.compose_font, self.settings.compose_size);
         if let Some(q) = &c.quoted {
             html.push_str(q);
         }
@@ -268,7 +268,7 @@ impl MailApp {
                 }
                 let subject = compose.subject.clone();
                 let owner = self.session_by_address(&self.composes[i].account).unwrap_or(self.active);
-                self.send_to(owner, mailcraft_sync::Command::Do(Action::Send { compose }));
+                self.send_to(owner, mailwright_sync::Command::Do(Action::Send { compose }));
                 self.composes[i].open = false;
                 self.status = format!("Sending \u{201c}{subject}\u{201d}\u{2026}");
             }
@@ -283,7 +283,7 @@ impl MailApp {
         match self.build(&self.composes[i]) {
             Ok(compose) => {
                 let owner = self.session_by_address(&self.composes[i].account).unwrap_or(self.active);
-                self.send_to(owner, mailcraft_sync::Command::Do(Action::SaveDraft { compose }));
+                self.send_to(owner, mailwright_sync::Command::Do(Action::SaveDraft { compose }));
                 // Once the server has it, `DraftSaved` points this window at it; meanwhile a new
                 // local id keeps the next save apart.
                 let c = &mut self.composes[i];
@@ -451,7 +451,7 @@ pub fn windows(app: &mut MailApp, ctx: &Context) {
                 Do::People(q) => {
                     if app.people.0 != q {
                         let owner = app.session_by_address(&app.composes[i].account).unwrap_or(app.active);
-                        app.send_to(owner, mailcraft_sync::Command::People(q));
+                        app.send_to(owner, mailwright_sync::Command::People(q));
                     }
                 }
             }

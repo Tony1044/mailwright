@@ -1,9 +1,9 @@
 [package]
-name = "mailcraft-graph"
+name = "mailwright-graph"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Microsoft Graph client for MailCraft: OAuth sign-in (auth code + PKCE, device code), mail and calendar endpoints"
+description = "Microsoft Graph client for Mailwright: OAuth sign-in (auth code + PKCE, device code), mail and calendar endpoints"
 
 [lints]
 workspace = true

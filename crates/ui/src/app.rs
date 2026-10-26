@@ -8,12 +8,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use egui::{Context, Ui};
-use mailcraft_graph::auth::DeviceCode;
-use mailcraft_graph::tokens::{MemoryTokenStore, SystemTokenStore, TokenStore};
-use mailcraft_graph::discovery::{Discovery, DiscoveryConfig, discover};
-use mailcraft_graph::{AccountConfig, GraphClient, GraphError};
-use mailcraft_store::{Action, Addr, AttachmentRow, EventRow, FolderRow, ListFilter, MessageRow, SortBy, Store};
-use mailcraft_sync::{Command, SyncHandle, Update};
+use mailwright_graph::auth::DeviceCode;
+use mailwright_graph::tokens::{MemoryTokenStore, SystemTokenStore, TokenStore};
+use mailwright_graph::discovery::{Discovery, DiscoveryConfig, discover};
+use mailwright_graph::{AccountConfig, GraphClient, GraphError};
+use mailwright_store::{Action, Addr, AttachmentRow, EventRow, FolderRow, ListFilter, MessageRow, SortBy, Store};
+use mailwright_sync::{Command, SyncHandle, Update};
 
 use crate::calendar::CalState;
 use crate::compose::ComposeWin;
@@ -44,12 +44,12 @@ pub enum AppMsg {
     RemoteImage { url: String, bytes: Option<Vec<u8>> },
 }
 
-/// Opens MailCraft's own sign-in window on a URL (a separate process with a web view).
+/// Opens Mailwright's own sign-in window on a URL (a separate process with a web view).
 pub type SignInWindow = Arc<dyn Fn(&str) -> std::io::Result<std::process::Child> + Send + Sync>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SignInMethod {
-    /// In a MailCraft window.
+    /// In a Mailwright window.
     InApp,
     /// In the default browser.
     Browser,
@@ -83,7 +83,7 @@ impl Session {
 /// The message in the reading pane.
 pub struct Reading {
     pub row: MessageRow,
-    pub doc: Option<mailcraft_html::Document>,
+    pub doc: Option<mailwright_html::Document>,
     pub attachments: Vec<AttachmentRow>,
     pub event: Option<EventRow>,
     pub allow_remote: bool,
@@ -97,6 +97,11 @@ pub struct MailState {
     pub folder: Option<String>,
     pub list: Vec<MessageRow>,
     pub list_dirty: bool,
+    /// Bumped whenever `list` is reloaded (the list's layout is kept until then).
+    pub list_gen: u64,
+    /// Focused Inbox: unread mail on the tab that isn't showing.
+    pub other_half_unread: i64,
+    pub layout: crate::list::ListLayout,
     pub selected: Vec<String>,
     pub anchor: Option<String>,
     pub filter: ListFilter,
@@ -176,6 +181,15 @@ pub struct MailApp {
     style_ready: bool,
     fonts_frames: u8,
     pub options_draft: Option<Settings>,
+    /// New mail that hasn't been looked at yet: the taskbar icon carries an envelope.
+    pub new_mail_waiting: bool,
+    icon_badged: Option<bool>,
+    window_title: String,
+    badge: crate::notify::Badge,
+    clicked_tx: Sender<crate::notify::Clicked>,
+    clicked_rx: Receiver<crate::notify::Clicked>,
+    /// Where sign-ins are kept (asking the keyring is slow, so it's asked once).
+    pub keyring_location: Option<String>,
 }
 
 fn safe_name(s: &str) -> String {
@@ -190,6 +204,7 @@ impl MailApp {
         mail.expanded = settings.expanded.iter().cloned().collect();
         let signin = SignInState { client_id: settings.client_id_override.clone(), ..Default::default() };
         let cal = CalState::new(settings.calendar_view);
+        let (clicked_tx, clicked_rx) = channel();
         MailApp {
             settings,
             settings_path,
@@ -220,6 +235,13 @@ impl MailApp {
             style_ready: false,
             fonts_frames: 0,
             options_draft: None,
+            new_mail_waiting: false,
+            icon_badged: None,
+            window_title: String::new(),
+            badge: crate::notify::Badge::new(),
+            clicked_tx,
+            clicked_rx,
+            keyring_location: None,
         }
     }
 
@@ -271,7 +293,7 @@ impl MailApp {
         self.next_id
     }
 
-    fn wake(&self) -> mailcraft_sync::Wake {
+    fn wake(&self) -> mailwright_sync::Wake {
         let slot = self.ctx_slot.clone();
         Arc::new(move || {
             if let Ok(g) = slot.lock() {
@@ -298,7 +320,7 @@ impl MailApp {
         }
         let db_path = if demo { self.data_dir.join("sample-mailbox.sqlite") } else { self.data_dir.join(format!("mail-{}.sqlite", safe_name(&account.username))) };
         let _ = std::fs::create_dir_all(&self.data_dir);
-        let (sync, updates) = match mailcraft_sync::start(db_path.clone(), self.settings.offline_days, self.wake()) {
+        let (sync, updates) = match mailwright_sync::start(db_path.clone(), self.settings.offline_days, self.wake()) {
             Ok(x) => x,
             Err(e) => {
                 self.errors.push(format!("Couldn't start syncing {}: {e}", account.username));
@@ -412,12 +434,12 @@ impl MailApp {
     /// Work out what kind of account the typed address is.
     pub fn discover(&mut self) {
         let email = self.signin.email.trim().to_string();
-        if !mailcraft_graph::discovery::valid_email(&email) {
+        if !mailwright_graph::discovery::valid_email(&email) {
             self.signin.error = Some("Enter your email address, like name@example.com.".into());
             return;
         }
         if self.session_by_address(&email).is_some() {
-            self.signin.error = Some(format!("{email} is already in MailCraft."));
+            self.signin.error = Some(format!("{email} is already in Mailwright."));
             return;
         }
         self.signin.error = None;
@@ -438,9 +460,9 @@ impl MailApp {
             self.signin.error = Some(d.describe());
             return;
         };
-        let Some(client_id) = mailcraft_graph::config::client_id(&self.signin.client_id) else {
+        let Some(client_id) = mailwright_graph::config::client_id(&self.signin.client_id) else {
             self.signin.show_advanced = true;
-            self.signin.error = Some("This copy of MailCraft has no built-in app registration yet. Enter your organisation's Application (client) ID under Advanced.".into());
+            self.signin.error = Some("This copy of Mailwright has no built-in app registration yet. Enter your organisation's Application (client) ID under Advanced.".into());
             return;
         };
         if self.settings.client_id_override != self.signin.client_id.trim() {
@@ -462,11 +484,11 @@ impl MailApp {
         let done = Arc::new(AtomicBool::new(false));
         std::thread::spawn(move || {
             let tokens = match method {
-                SignInMethod::DeviceCode => match mailcraft_graph::auth::start_device_code(&cfg) {
+                SignInMethod::DeviceCode => match mailwright_graph::auth::start_device_code(&cfg) {
                     Ok(dc) => {
                         let _ = tx.send(AppMsg::DeviceCode(dc.clone()));
                         wake();
-                        mailcraft_graph::auth::finish_device_code(&cfg, &dc, cancel)
+                        mailwright_graph::auth::finish_device_code(&cfg, &dc, cancel)
                     }
                     Err(e) => Err(e),
                 },
@@ -514,9 +536,9 @@ impl MailApp {
                             }
                         }
                     };
-                    mailcraft_graph::auth::sign_in_with_browser(&cfg, &open, cancel)
+                    mailwright_graph::auth::sign_in_with_browser(&cfg, &open, cancel)
                 }
-                SignInMethod::Browser => mailcraft_graph::auth::sign_in_with_browser(&cfg, &|url| open::that_detached(url).is_ok(), cancel),
+                SignInMethod::Browser => mailwright_graph::auth::sign_in_with_browser(&cfg, &|url| open::that_detached(url).is_ok(), cancel),
             };
             done.store(true, std::sync::atomic::Ordering::Relaxed);
             let result = tokens.and_then(|t| {
@@ -540,13 +562,13 @@ impl MailApp {
             email: s.account.username.clone(),
             domain: s.account.username.rsplit_once('@').map(|(_, d)| d.to_string()).unwrap_or_default(),
             kind: if s.account.tenant == "consumers" {
-                mailcraft_graph::discovery::AccountKind::Personal
+                mailwright_graph::discovery::AccountKind::Personal
             } else {
-                mailcraft_graph::discovery::AccountKind::Work { tenant: s.account.tenant.clone(), organisation: String::new(), federated: false }
+                mailwright_graph::discovery::AccountKind::Work { tenant: s.account.tenant.clone(), organisation: String::new(), federated: false }
             },
             mx: Vec::new(),
         });
-        if s.account.client_id != mailcraft_graph::config::client_id("").unwrap_or_default() {
+        if s.account.client_id != mailwright_graph::config::client_id("").unwrap_or_default() {
             self.signin.client_id = s.account.client_id.clone();
         }
         self.signin.adding = true;
@@ -562,7 +584,7 @@ impl MailApp {
         self.signin.method = None;
     }
 
-    /// Take an account out of MailCraft (its local copy and saved sign-in go; nothing changes on
+    /// Take an account out of Mailwright (its local copy and saved sign-in go; nothing changes on
     /// the server).
     pub fn remove_account(&mut self, address: &str) {
         if let Some(i) = self.session_by_address(address) {
@@ -645,8 +667,80 @@ impl MailApp {
             let stores: Vec<&Store> = self.sessions.iter().map(|s| &s.store).collect();
             self.cal.reload(&stores);
         }
+        while let Ok(c) = self.clicked_rx.try_recv() {
+            self.open_from_alert(ctx, &c.account, &c.id);
+        }
         self.mark_read_timer(ctx);
         crate::keys::shortcuts(self, ctx);
+        self.window_state(ctx);
+    }
+
+    /// Unread mail in every account's Inbox.
+    pub fn inbox_unread(&self) -> i64 {
+        self.sessions.iter().flat_map(|s| s.folders.iter()).filter(|f| f.well_known.as_deref() == Some("inbox")).map(|f| f.unread).sum()
+    }
+
+    /// The window title, the taskbar envelope, and the dock's unread count.
+    fn window_state(&mut self, ctx: &Context) {
+        let focused = ctx.input(|i| i.viewport().focused).unwrap_or(false);
+        let on_inbox = self.view == View::Mail && self.current_folder().is_some_and(|f| f.well_known.as_deref() == Some("inbox"));
+        if self.new_mail_waiting && focused && on_inbox {
+            self.new_mail_waiting = false;
+        }
+        let unread = self.inbox_unread();
+        if unread == 0 {
+            self.new_mail_waiting = false;
+        }
+        let badged = self.new_mail_waiting && self.settings.new_mail_envelope;
+        if self.icon_badged != Some(badged) {
+            self.icon_badged = Some(badged);
+            let rgba = if badged { crate::app_icon::rgba_badged(256) } else { crate::app_icon::rgba(256) };
+            ctx.send_viewport_cmd(egui::ViewportCommand::Icon(Some(Arc::new(egui::IconData { rgba, width: 256, height: 256 }))));
+        }
+        self.badge.set(if self.settings.new_mail_envelope { unread } else { 0 });
+        let title = match (self.view, self.session()) {
+            (View::Calendar, Some(s)) => format!("Calendar \u{2013} {} \u{2013} {}", s.label(), crate::notify::APP_NAME),
+            (View::Mail, Some(s)) => {
+                let folder = self.current_folder().map(|f| f.name.clone()).unwrap_or_else(|| "Mail".into());
+                let count = self.current_folder().filter(|f| f.unread > 0).map(|f| format!(" ({})", f.unread)).unwrap_or_default();
+                format!("{folder}{count} \u{2013} {} \u{2013} {}", s.label(), crate::notify::APP_NAME)
+            }
+            _ => crate::notify::APP_NAME.to_string(),
+        };
+        if title != self.window_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.window_title = title;
+        }
+    }
+
+    /// New mail arrived in account `i`.
+    fn mail_arrived(&mut self, ctx: &Context, i: usize, items: Vec<mailwright_sync::NewMail>) {
+        log::info!("{} new message(s) for account {i}", items.len());
+        if self.settings.new_mail_envelope {
+            self.new_mail_waiting = true;
+        }
+        let account = self.sessions[i].label().to_string();
+        let alert = crate::notify::Alert { account, items, popup: self.settings.new_mail_alert, sound: self.settings.new_mail_sound };
+        let wake = self.wake();
+        crate::notify::announce(alert, Some(self.clicked_tx.clone()), move || wake());
+        ctx.request_repaint();
+    }
+
+    /// The desktop alert was clicked: bring the window forward on that message.
+    fn open_from_alert(&mut self, ctx: &Context, account: &str, id: &str) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        let Some(i) = self.sessions.iter().position(|s| s.label() == account) else { return };
+        let Ok(Some(row)) = self.sessions[i].store.message(id) else { return };
+        self.backstage = None;
+        self.mail.filter = ListFilter::All;
+        self.select_folder_in(i, &row.folder_id);
+        if self.focused_applies() {
+            self.mail.other_tab = !row.focused;
+        }
+        self.reload_list();
+        self.select_message(id, false, false);
+        self.mail.scroll_to_selected = true;
     }
 
     fn on_msg(&mut self, ctx: &Context, m: AppMsg) {
@@ -707,7 +801,7 @@ impl MailApp {
                     match r {
                         Ok(d) => {
                             if d.tenant().is_none() {
-                                self.signin.error = Some(format!("{}. MailCraft works with Microsoft 365 and Outlook.com accounts.", d.describe()));
+                                self.signin.error = Some(format!("{}. Mailwright works with Microsoft 365 and Outlook.com accounts.", d.describe()));
                             }
                             self.signin.discovery = Some(d);
                         }
@@ -787,6 +881,7 @@ impl MailApp {
                 }
             }
             Update::Sent(subject) => self.status = format!("Sent \u{201c}{subject}\u{201d}"),
+            Update::NewMail(items) => self.mail_arrived(ctx, i, items),
             Update::DraftSaved { local_id, draft_id } => self.draft_saved(&local_id, &draft_id),
             Update::Error(e) => {
                 let e = if self.sessions.len() > 1 { format!("{}: {e}", self.sessions[i].label()) } else { e };
@@ -869,7 +964,12 @@ impl MailApp {
         } else {
             Vec::new()
         };
+        self.mail.other_half_unread = match (&self.mail.folder, self.focused_applies()) {
+            (Some(f), true) => s.store.unread_split(f, self.mail.other_tab).unwrap_or(0),
+            _ => 0,
+        };
         self.mail.list = list;
+        self.mail.list_gen += 1;
         // Keep the selection to what's still there.
         let ids: HashSet<&str> = self.mail.list.iter().map(|m| m.id.as_str()).collect();
         self.mail.selected.retain(|id| ids.contains(id.as_str()));
@@ -950,7 +1050,7 @@ impl MailApp {
         };
         let attachments = s.store.attachments(id).unwrap_or_default();
         let event = row.event_id.as_deref().and_then(|e| s.store.event(e).ok().flatten());
-        let doc = row.body.as_deref().map(mailcraft_html::parse);
+        let doc = row.body.as_deref().map(mailwright_html::parse);
         let sender = row.from.address.to_ascii_lowercase();
         let allow_remote = self.settings.remote_images || self.settings.safe_senders.iter().any(|x| x.eq_ignore_ascii_case(&sender));
         let keep = self.mail.reading.as_ref().filter(|r| r.row.id == id);
@@ -993,14 +1093,14 @@ impl MailApp {
         let Some(r) = &self.mail.reading else { return };
         let Some(doc) = &r.doc else { return };
         for img in doc.images() {
-            if let mailcraft_html::ImageSource::Remote(url) = &img.source {
+            if let mailwright_html::ImageSource::Remote(url) = &img.source {
                 if self.remote.contains_key(url) {
                     continue;
                 }
                 self.remote.insert(url.clone(), None);
                 let (tx, url, wake) = (self.tx.clone(), url.clone(), self.wake());
                 std::thread::spawn(move || {
-                    let bytes = mailcraft_graph::http::agent()
+                    let bytes = mailwright_graph::http::agent()
                         .get(&url)
                         .call()
                         .ok()
@@ -1216,7 +1316,7 @@ impl MailApp {
 
     pub fn save_attachment(&mut self, att: &AttachmentRow, open_it: bool) {
         let path = if open_it {
-            let dir = std::env::temp_dir().join("MailCraft").join(safe_name(&att.message_id).chars().rev().take(16).collect::<String>());
+            let dir = std::env::temp_dir().join("Mailwright").join(safe_name(&att.message_id).chars().rev().take(16).collect::<String>());
             dir.join(crate::compose::safe_file_name(&att.name))
         } else {
             match rfd::FileDialog::new().set_file_name(crate::compose::safe_file_name(&att.name)).save_file() {

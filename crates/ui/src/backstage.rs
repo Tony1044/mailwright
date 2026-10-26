@@ -70,8 +70,13 @@ fn info(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
         }
     });
     ui.add_space(18.0);
-    let store = mailcraft_graph::tokens::SystemTokenStore::new(app.data_dir.clone());
-    let keyring = mailcraft_graph::tokens::TokenStore::location(&store);
+    let keyring = app
+        .keyring_location
+        .get_or_insert_with(|| {
+            let store = mailwright_graph::tokens::SystemTokenStore::new(app.data_dir.clone());
+            mailwright_graph::tokens::TokenStore::location(&store)
+        })
+        .clone();
     let mut remove = None;
     let mut reauth = None;
     for (i, s) in app.sessions.iter().enumerate() {
@@ -151,7 +156,7 @@ fn options(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
         app.options_draft = Some(app.settings.clone());
     }
     let Some(mut d) = app.options_draft.take() else { return };
-    ui.label(egui::RichText::new("MailCraft Options").font(semibold(26.0)));
+    ui.label(egui::RichText::new("Mailwright Options").font(semibold(26.0)));
     ui.add_space(16.0);
     section(ui, "General", t);
     ui.horizontal(|ui| {
@@ -187,6 +192,16 @@ fn options(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
         });
     }
     ui.checkbox(&mut d.focused_inbox, "Show Focused Inbox");
+    ui.add_space(8.0);
+    ui.label(egui::RichText::new("When new messages arrive").font(semibold(14.0)));
+    ui.checkbox(&mut d.new_mail_sound, "Play a sound");
+    ui.checkbox(&mut d.new_mail_alert, "Display a Desktop Alert");
+    ui.checkbox(&mut d.new_mail_envelope, "Show an envelope icon on the taskbar");
+    if ui.small_button("Test").on_hover_text("Play the sound and show an alert").clicked() {
+        let items = vec![mailwright_sync::NewMail { id: String::new(), from: "Mailwright".into(), subject: "This is what new mail looks like".into(), preview: String::new(), focused: true }];
+        crate::notify::announce(crate::notify::Alert { account: String::new(), items, popup: d.new_mail_alert, sound: d.new_mail_sound }, None, || {});
+    }
+    ui.add_space(8.0);
     ui.checkbox(&mut d.message_preview, "Show a preview line under each message");
     ui.horizontal(|ui| {
         ui.label("Reading Pane");
@@ -256,7 +271,7 @@ fn apply_options(app: &mut MailApp, ctx: &egui::Context, d: &Settings) {
     app.settings = Settings { accounts: app.settings.accounts.clone(), ..d.clone() };
     crate::theme::set_appearance(ctx, d.appearance);
     if days_changed {
-        app.send(mailcraft_sync::Command::SetWindow(d.offline_days));
+        app.send(mailwright_sync::Command::SetWindow(d.offline_days));
     }
     app.mail.list_dirty = true;
     app.save_settings();
@@ -268,7 +283,7 @@ fn about(ui: &mut Ui, t: &Tokens) {
         crate::app_icon::paint(ui.painter(), r);
         ui.add_space(8.0);
         ui.vertical(|ui| {
-            ui.label(egui::RichText::new("MailCraft").font(semibold(26.0)));
+            ui.label(egui::RichText::new("Mailwright").font(semibold(26.0)));
             ui.label(egui::RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).color(t.text_dim));
         });
     });
@@ -276,7 +291,7 @@ fn about(ui: &mut Ui, t: &Tokens) {
     for line in [
         "A desktop mail and calendar client for Microsoft 365, written in Rust with no unsafe code.",
         "It works with Exchange Online through Microsoft Graph: mail folders, messages and attachments, sending, flags and categories, Focused Inbox, the calendar and meeting responses. Mail from the last few months is kept on this computer (SQLite) and kept in step with Graph delta queries, so it can be read, searched and organised offline; changes made offline are sent when you're back online.",
-        "MailCraft is an independent program. It is not made or endorsed by Microsoft. Microsoft 365, Exchange and Outlook are trademarks of the Microsoft group of companies.",
+        "Mailwright is an independent program. It is not made or endorsed by Microsoft. Microsoft 365, Exchange and Outlook are trademarks of the Microsoft group of companies.",
         "Fonts: Inter, Source Sans 3, Source Serif 4 and JetBrains Mono, under the SIL Open Font License 1.1.",
         "Licensed under the MIT or Apache 2.0 licence.",
     ] {

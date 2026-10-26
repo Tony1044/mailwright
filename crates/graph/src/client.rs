@@ -1,4 +1,4 @@
-//! The Graph calls MailCraft makes. Requests carry a fresh access token (refreshed when it is
+//! The Graph calls Mailwright makes. Requests carry a fresh access token (refreshed when it is
 //! about to expire, and once more on a 401), wait out throttling (429/503 with Retry-After), and
 //! turn Graph's error bodies into [`GraphError::Api`].
 
@@ -122,6 +122,9 @@ impl GraphClient {
             let result = match (method, body) {
                 ("GET", _) => {
                     let mut r = agent.get(&url).header("Authorization", &auth_header);
+                    if url.ends_with("/$value") {
+                        r = r.config().timeout_recv_body(Some(http::LONG)).timeout_global(Some(http::LONG)).build();
+                    }
                     if !prefer.is_empty() {
                         r = r.header("Prefer", &prefer_header);
                     }
@@ -401,6 +404,10 @@ impl GraphClient {
             // The upload URL carries its own authorisation: no bearer token here.
             let mut resp = http::agent()
                 .put(&s.upload_url)
+                .config()
+                .timeout_send_body(Some(http::LONG))
+                .timeout_global(Some(http::LONG))
+                .build()
                 .header("Content-Range", &format!("bytes {start}-{}/{total}", end - 1))
                 .send(&bytes[start..end])
                 .map_err(|e| http::network_error(&s.upload_url, e))?;

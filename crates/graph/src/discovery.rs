@@ -19,8 +19,8 @@ pub struct DiscoveryConfig {
 impl Default for DiscoveryConfig {
     fn default() -> Self {
         DiscoveryConfig {
-            login_base: std::env::var("MAILCRAFT_LOGIN_BASE").unwrap_or_else(|_| crate::config::LOGIN_BASE.to_string()),
-            doh: match std::env::var("MAILCRAFT_DOH") {
+            login_base: std::env::var("MAILWRIGHT_LOGIN_BASE").unwrap_or_else(|_| crate::config::LOGIN_BASE.to_string()),
+            doh: match std::env::var("MAILWRIGHT_DOH") {
                 Ok(v) => vec![v],
                 Err(_) => vec!["https://cloudflare-dns.com/dns-query".into(), "https://dns.google/resolve".into()],
             },

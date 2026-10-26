@@ -5,10 +5,10 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use mailcraft_graph::auth;
-use mailcraft_graph::client::{EventResponse, ReplyKind};
-use mailcraft_graph::tokens::{MemoryTokenStore, TokenStore};
-use mailcraft_graph::{AccountConfig, GraphClient, GraphError};
+use mailwright_graph::auth;
+use mailwright_graph::client::{EventResponse, ReplyKind};
+use mailwright_graph::tokens::{MemoryTokenStore, TokenStore};
+use mailwright_graph::{AccountConfig, GraphClient, GraphError};
 use mockgraph::MockGraph;
 use serde_json::json;
 
@@ -272,7 +272,7 @@ fn search_and_people() {
 
 #[test]
 fn discovery_tells_account_types_apart() {
-    use mailcraft_graph::discovery::{AccountKind, DiscoveryConfig, discover};
+    use mailwright_graph::discovery::{AccountKind, DiscoveryConfig, discover};
     let mock = MockGraph::start().unwrap();
     let cfg = DiscoveryConfig { login_base: mock.login_base(), doh: vec![mock.doh_base()] };
     let d = discover(&cfg, "sam.carter@harbourview.example").unwrap();

@@ -1,5 +1,5 @@
 use super::*;
-use mailcraft_graph::types::{EmailAddress, FollowupFlag, ItemBody, Recipient};
+use mailwright_graph::types::{EmailAddress, FollowupFlag, ItemBody, Recipient};
 
 fn folder(id: &str, name: &str, parent: Option<&str>) -> MailFolder {
     MailFolder { id: id.into(), display_name: name.into(), parent_folder_id: parent.map(str::to_string), total_item_count: 0, ..Default::default() }
@@ -134,8 +134,8 @@ fn calendar_windows_replace_what_they_cover() {
     let ev = |id: &str, start: &str, end: &str| Event {
         id: id.into(),
         subject: Some(id.into()),
-        start: Some(mailcraft_graph::types::DateTimeTimeZone { date_time: start.into(), time_zone: "UTC".into() }),
-        end: Some(mailcraft_graph::types::DateTimeTimeZone { date_time: end.into(), time_zone: "UTC".into() }),
+        start: Some(mailwright_graph::types::DateTimeTimeZone { date_time: start.into(), time_zone: "UTC".into() }),
+        end: Some(mailwright_graph::types::DateTimeTimeZone { date_time: end.into(), time_zone: "UTC".into() }),
         ..Default::default()
     };
     let t = |s: &str| parse_time(s).unwrap();
@@ -152,7 +152,7 @@ fn calendar_windows_replace_what_they_cover() {
 
 #[test]
 fn a_new_schema_rebuilds_the_cache_but_keeps_queued_changes() {
-    let dir = std::env::temp_dir().join(format!("mailcraft-store-test-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("mailwright-store-test-{}", std::process::id()));
     let path = dir.join("cache.sqlite");
     let _ = std::fs::remove_file(&path);
     {

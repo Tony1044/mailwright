@@ -1,10 +1,10 @@
 //! A stand-in for Microsoft Entra ID's token endpoints and the parts of Microsoft Graph that
-//! MailCraft uses, holding a sample mailbox in memory. It runs on `127.0.0.1` on a free port; point
-//! MailCraft at it with `MAILCRAFT_LOGIN_BASE` / `MAILCRAFT_GRAPH_BASE` (or [`MockGraph::login_base`]
-//! and [`MockGraph::graph_base`]). Used by the integration tests and by MailCraft's sample
+//! Mailwright uses, holding a sample mailbox in memory. It runs on `127.0.0.1` on a free port; point
+//! Mailwright at it with `MAILWRIGHT_LOGIN_BASE` / `MAILWRIGHT_GRAPH_BASE` (or [`MockGraph::login_base`]
+//! and [`MockGraph::graph_base`]). Used by the integration tests and by Mailwright's sample
 //! mailbox (demo mode), so nobody needs a tenant to try it.
 //!
-//! It behaves like Graph where MailCraft depends on it: delta rounds with next/delta links and
+//! It behaves like Graph where Mailwright depends on it: delta rounds with next/delta links and
 //! `@removed` entries, `$select`, `$top`/`$skip` paging, `$search`, drafts, reply/forward drafts,
 //! upload sessions, move/delete, calendar views, meeting responses, bearer tokens that expire, and
 //! throttling (429 with Retry-After) on request.
@@ -96,6 +96,8 @@ pub struct State {
     uploads: HashMap<String, Upload>,
     /// Answer the next this-many Graph requests with 429.
     pub throttle_next: u32,
+    /// Answer changes to messages (PATCH) with 503 while this is set.
+    pub refuse_message_changes: bool,
     /// Every request seen, as `METHOD /path?query`.
     pub log: Vec<String>,
     /// Messages sent (their JSON at send time).
@@ -124,6 +126,7 @@ impl State {
             device_polls: 0,
             uploads: HashMap::new(),
             throttle_next: 0,
+            refuse_message_changes: false,
             log: Vec::new(),
             sent: Vec::new(),
             token_lifetime: 3600,
@@ -157,7 +160,7 @@ impl State {
     }
 
     /// Move a message, leaving a tombstone in the folder it left. It keeps its id (Graph gives it
-    /// a new one; MailCraft copes either way because it uses the id the move returns).
+    /// a new one; Mailwright copes either way because it uses the id the move returns).
     pub fn move_msg(&mut self, id: &str, to: &str) -> Option<String> {
         let seq = self.bump();
         let new_id = self.new_id("AAMkMv");
@@ -609,6 +612,7 @@ fn route(st: &mut State, root: &str, method: &str, raw_url: &str, auth: Option<&
             Some(m) => ok(st.msg_json(m, select, q.get("$expand").is_some_and(|e| e.contains("event")))),
             None => not_found(),
         },
+        ("PATCH", ["me", "messages", _]) if st.refuse_message_changes => err(503, "ServiceUnavailable", "Try again later"),
         ("PATCH", ["me", "messages", id]) => {
             let seq = st.bump();
             let Some(m) = st.msg_mut(id) else { return not_found() };

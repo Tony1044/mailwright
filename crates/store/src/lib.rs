@@ -1,4 +1,4 @@
-//! MailCraft's offline cache, one SQLite file per mailbox.
+//! Mailwright's offline cache, one SQLite file per mailbox.
 //!
 //! The sync engine writes what Graph sends (folders, message lists from delta rounds, bodies,
 //! attachments, calendar windows); the interface reads from here, so everything already fetched
@@ -14,7 +14,7 @@ pub mod model;
 
 use std::path::Path;
 
-use mailcraft_graph::types::{Attachment, Calendar, Event, MailFolder, Message};
+use mailwright_graph::types::{Attachment, Calendar, Event, MailFolder, Message};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 pub use model::*;
@@ -88,7 +88,7 @@ pub fn parse_time(s: &str) -> Option<i64> {
         .map(|t| t.and_utc().timestamp())
 }
 
-fn addrs_json(list: &[mailcraft_graph::types::Recipient]) -> String {
+fn addrs_json(list: &[mailwright_graph::types::Recipient]) -> String {
     let v: Vec<Addr> = list.iter().map(Addr::from_graph).collect();
     serde_json::to_string(&v).unwrap_or_else(|_| "[]".into())
 }
@@ -436,6 +436,23 @@ impl Store {
         Ok(n)
     }
 
+    /// Unread messages in a folder's Focused or Other half.
+    pub fn unread_split(&self, folder: &str, focused: bool) -> Result<i64> {
+        Ok(self.db.query_row("SELECT count(*) FROM messages WHERE folder_id = ?1 AND is_read = 0 AND focused = ?2", params![folder, focused], |r| r.get(0))?)
+    }
+
+    /// Which of these messages are already saved.
+    pub fn known_ids(&self, ids: &[String]) -> Result<std::collections::HashSet<String>> {
+        let mut st = self.db.prepare_cached("SELECT 1 FROM messages WHERE id = ?1")?;
+        let mut out = std::collections::HashSet::new();
+        for id in ids {
+            if st.exists([id])? {
+                out.insert(id.clone());
+            }
+        }
+        Ok(out)
+    }
+
     /// Delta said these are gone from a folder.
     pub fn remove_messages(&mut self, folder: &str, ids: &[String]) -> Result<()> {
         let tx = self.db.transaction()?;
@@ -450,7 +467,9 @@ impl Store {
 
     /// A folder's messages, newest first (or as sorted), filtered.
     pub fn messages(&self, folder: &str, filter: ListFilter, sort: SortBy, ascending: bool, me: &str) -> Result<Vec<MessageRow>> {
-        let mut sql = format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE folder_id = ?1");
+        // Without bodies: a list can be thousands of messages long.
+        let cols = MESSAGE_COLUMNS.replace(", body,", ", NULL AS body,");
+        let mut sql = format!("SELECT {cols} FROM messages WHERE folder_id = ?1");
         match filter {
             ListFilter::All => {}
             ListFilter::Unread => sql.push_str(" AND is_read = 0"),
@@ -806,7 +825,7 @@ impl Store {
                     tx.execute("UPDATE events SET body = ?2, preview = ?3 WHERE id = ?1", params![id, b, index_text(b).split_whitespace().collect::<Vec<_>>().join(" ")])?;
                 }
                 if let Some(a) = patch.get("attendees") {
-                    let list: Vec<mailcraft_graph::types::Attendee> = serde_json::from_value(a.clone()).unwrap_or_default();
+                    let list: Vec<mailwright_graph::types::Attendee> = serde_json::from_value(a.clone()).unwrap_or_default();
                     tx.execute("UPDATE events SET attendees = ?2 WHERE id = ?1", params![id, serde_json::to_string(&attendee_rows(&list))?])?;
                 }
                 if let Some(m) = patch.get("reminderMinutesBeforeStart").and_then(|v| v.as_i64()) {
@@ -986,7 +1005,7 @@ impl Store {
     }
 }
 
-fn attendee_rows(list: &[mailcraft_graph::types::Attendee]) -> Vec<AttendeeRow> {
+fn attendee_rows(list: &[mailwright_graph::types::Attendee]) -> Vec<AttendeeRow> {
     list.iter()
         .map(|a| AttendeeRow {
             addr: Addr { name: a.email_address.name.clone().unwrap_or_default(), address: a.email_address.address.clone().unwrap_or_default() },

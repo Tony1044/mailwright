@@ -2,7 +2,7 @@
 
 use chrono::{Datelike, Duration, NaiveDate, NaiveTime, Timelike};
 use egui::{Context, Ui, vec2};
-use mailcraft_store::{Action, Addr, AttendeeRow, EventRow};
+use mailwright_store::{Action, Addr, AttendeeRow, EventRow};
 use serde_json::json;
 
 use crate::app::MailApp;
@@ -117,7 +117,7 @@ impl MailApp {
         let Some(owner) = self.session_for_event(id) else { return };
         let Some(e) = self.sessions[owner].store.event(id).ok().flatten() else { return };
         if !e.local {
-            self.send_to(owner, mailcraft_sync::Command::OpenEvent(id.to_string()));
+            self.send_to(owner, mailwright_sync::Command::OpenEvent(id.to_string()));
         }
         let wid = self.next_id();
         let ed = editor_from(wid, &e);
@@ -153,7 +153,7 @@ fn editor_from(wid: u64, e: &EventRow) -> EventEditor {
         reminder: e.reminder_minutes,
         online: !e.join_url.is_empty(),
         join_url: e.join_url.clone(),
-        body: e.body.as_deref().map(mailcraft_html::to_text).unwrap_or_else(|| e.preview.clone()),
+        body: e.body.as_deref().map(mailwright_html::to_text).unwrap_or_else(|| e.preview.clone()),
         body_loaded: e.body.is_some() || e.local,
         organizer: (!e.organizer.address.is_empty()).then(|| e.organizer.clone()),
         is_organizer: e.is_organizer || e.local,
@@ -195,7 +195,7 @@ impl EventEditor {
         }
         let mut v = json!({
             "subject": self.subject.trim(),
-            "body": {"contentType": "html", "content": mailcraft_html::text_to_html(&self.body, font, size)},
+            "body": {"contentType": "html", "content": mailwright_html::text_to_html(&self.body, font, size)},
             "start": {"dateTime": Self::graph_time(start), "timeZone": "UTC"},
             "end": {"dateTime": Self::graph_time(end), "timeZone": "UTC"},
             "isAllDay": self.all_day,
@@ -232,7 +232,7 @@ pub fn windows(app: &mut MailApp, ctx: &Context) {
             if let Some(id) = app.editors[i].id.clone() {
                 if let Some(e) = app.session_for_event(&id).and_then(|i| app.sessions[i].store.event(&id).ok().flatten()) {
                     if let Some(b) = e.body {
-                        app.editors[i].body = mailcraft_html::to_text(&b);
+                        app.editors[i].body = mailwright_html::to_text(&b);
                         app.editors[i].body_loaded = true;
                     }
                 }
@@ -346,7 +346,7 @@ impl MailApp {
                 }
                 let calendar_id = ed.calendar_id.clone();
                 match owner {
-                    Some(i) => self.send_to(i, mailcraft_sync::Command::Do(Action::CreateEvent { local_id, calendar_id, body })),
+                    Some(i) => self.send_to(i, mailwright_sync::Command::Do(Action::CreateEvent { local_id, calendar_id, body })),
                     None => self.act(Action::CreateEvent { local_id, calendar_id, body }),
                 }
                 self.cal.dirty = true;

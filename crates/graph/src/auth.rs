@@ -2,7 +2,7 @@
 //!
 //! The usual way is the authorization code flow with PKCE: the system browser opens Microsoft's
 //! sign-in page (so MFA, conditional access and single sign-on all work as they do for Outlook),
-//! and the browser is sent back to `http://localhost:<port>` where MailCraft listens for the code.
+//! and the browser is sent back to `http://localhost:<port>` where Mailwright listens for the code.
 //! Where a browser can't reach the loopback address, the device code flow shows a code to enter at
 //! microsoft.com/devicelogin instead. Either way the result is an access token for Graph and a
 //! refresh token that keeps the session going.
@@ -245,7 +245,7 @@ fn handle_redirect(stream: TcpStream, state: &str) -> Option<Result<String, Grap
         respond(stream, 400, &page("Sign-in didn't finish", "The response didn't match this sign-in. Close this tab and try again."));
         Err(GraphError::SignInRequired("state mismatch".into()))
     } else {
-        respond(stream, 200, &page("You're signed in to MailCraft", "You can close this tab and go back to MailCraft."));
+        respond(stream, 200, &page("You're signed in to Mailwright", "You can close this tab and go back to Mailwright."));
         Ok(code.unwrap_or_default())
     };
     Some(result)
@@ -254,7 +254,7 @@ fn handle_redirect(stream: TcpStream, state: &str) -> Option<Result<String, Grap
 fn page(title: &str, text: &str) -> String {
     let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
     format!(
-        "<!doctype html><meta charset=utf-8><title>MailCraft</title><body style=\"font-family:Segoe UI,Arial,sans-serif;margin:60px\"><h2>{}</h2><p>{}</p></body>",
+        "<!doctype html><meta charset=utf-8><title>Mailwright</title><body style=\"font-family:Segoe UI,Arial,sans-serif;margin:60px\"><h2>{}</h2><p>{}</p></body>",
         esc(title),
         esc(text)
     )

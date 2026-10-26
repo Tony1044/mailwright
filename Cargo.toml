@@ -3,17 +3,17 @@ resolver = "3"
 members = ["crates/*", "apps/*", "tools/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.90"
 
 [workspace.dependencies]
-mailcraft-graph = { path = "crates/graph" }
-mailcraft-store = { path = "crates/store" }
-mailcraft-sync = { path = "crates/sync" }
-mailcraft-html = { path = "crates/html" }
-mailcraft-ui = { path = "crates/ui" }
+mailwright-graph = { path = "crates/graph" }
+mailwright-store = { path = "crates/store" }
+mailwright-sync = { path = "crates/sync" }
+mailwright-html = { path = "crates/html" }
+mailwright-ui = { path = "crates/ui" }
 mockgraph = { path = "tools/mockgraph" }
 
 serde = { version = "1", features = ["derive"] }

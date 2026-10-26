@@ -3,7 +3,7 @@ name = "mockgraph"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "A stand-in for Microsoft Entra ID and Graph (mail, calendar, people) with a sample mailbox, for MailCraft's tests and demo mode"
+description = "A stand-in for Microsoft Entra ID and Graph (mail, calendar, people) with a sample mailbox, for Mailwright's tests and demo mode"
 
 [lints]
 workspace = true

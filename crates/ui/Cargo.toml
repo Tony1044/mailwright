@@ -1,18 +1,18 @@
 [package]
-name = "mailcraft-ui"
+name = "mailwright-ui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "MailCraft's interface: a classic desktop mail and calendar client in egui"
+description = "Mailwright's interface: a classic desktop mail and calendar client in egui"
 
 [lints]
 workspace = true
 
 [dependencies]
-mailcraft-graph = { workspace = true }
-mailcraft-store = { workspace = true }
-mailcraft-sync = { workspace = true }
-mailcraft-html = { workspace = true }
+mailwright-graph = { workspace = true }
+mailwright-store = { workspace = true }
+mailwright-sync = { workspace = true }
+mailwright-html = { workspace = true }
 mockgraph = { workspace = true }
 egui = { workspace = true }
 serde = { workspace = true }
@@ -26,6 +26,7 @@ open = { workspace = true }
 dirs = { workspace = true }
 mime_guess = { workspace = true }
 ureq = { workspace = true }
+notify-rust = "4.18"
 
 [dev-dependencies]
 egui_kittest = { workspace = true }
@@ -33,3 +34,5 @@ egui_kittest = { workspace = true }
 # Load libwayland at run time (as eframe does), so building needs no Wayland development files.
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 wayland-sys = { version = "0.31", features = ["dlopen"] }
+# The unread count on the dock or taskbar icon (Unity launcher API: Ubuntu Dock, Dash to Dock, KDE).
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }

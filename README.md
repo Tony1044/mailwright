@@ -1,4 +1,4 @@
-# MailCraft
+# Mailwright
 
 A classic desktop mail and calendar client for Microsoft 365 – Exchange Online through Microsoft Graph – written in Rust with no `unsafe` code. One standalone `.exe` for Windows; one `.deb` for Ubuntu.
 
@@ -7,7 +7,7 @@ A classic desktop mail and calendar client for Microsoft 365 – Exchange Online
 - **Offline:** the last three months of mail (configurable) are kept in a local SQLite database with full-text search, kept in step with Graph delta queries. Everything you do offline is queued and sent when you're back online.
 - **Sign-in:** Microsoft's own page in your browser (authorization code + PKCE, so MFA and conditional access work), or a device code. The refresh token lives in Windows Credential Manager or the desktop keyring.
 
-See [docs/SETUP.md](docs/SETUP.md) for the one-off app registration in Microsoft Entra ID. To look around without a tenant, choose **Try MailCraft with a sample mailbox** on the first screen.
+There is nothing to set up first: type your email address and sign in, as in Outlook. See [docs/SETUP.md](docs/SETUP.md) for details, including what an IT administrator may need to approve. To look around without an account, choose **Try Mailwright with a sample mailbox** on the first screen.
 
 ## Layout
 
@@ -18,20 +18,20 @@ See [docs/SETUP.md](docs/SETUP.md) for the one-off app registration in Microsoft
 | `crates/sync` | The sync engine thread: delta rounds, sending queued changes, body prefetch |
 | `crates/html` | HTML mail to a safe block model (and to text) |
 | `crates/ui` | The egui interface |
-| `apps/mailcraft` | The desktop app |
+| `apps/mailwright` | The desktop app |
 | `tools/mockgraph` | A stand-in for Entra ID and Graph with a sample mailbox (tests and the sample mailbox) |
 
 ## Building
 
 ```sh
 cargo test --workspace
-cargo build --release -p mailcraft                 # Linux
-packaging/linux/package.sh target/release/mailcraft dist
-cargo build --release -p mailcraft --target x86_64-pc-windows-gnu   # Windows, from Linux with mingw-w64
+cargo build --release -p mailwright                 # Linux
+packaging/linux/package.sh target/release/mailwright dist
+cargo build --release -p mailwright --target x86_64-pc-windows-gnu   # Windows, from Linux with mingw-w64
 ```
 
-`cargo run -p mailcraft-ui --example ui_shot -- shots demo shot:inbox` takes headless screenshots.
+`cargo run -p mailwright-ui --example ui_shot -- shots demo shot:inbox` takes headless screenshots.
 
 ## Licence
 
-MIT or Apache 2.0. Fonts (Inter, Source Sans 3, Source Serif 4, JetBrains Mono) are under the SIL Open Font License. MailCraft is not made or endorsed by Microsoft.
+MIT or Apache 2.0. Fonts (Inter, Source Sans 3, Source Serif 4, JetBrains Mono) are under the SIL Open Font License. Mailwright is not made or endorsed by Microsoft.

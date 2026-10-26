@@ -1,6 +1,6 @@
-//! MailCraft's sign-in window: Microsoft's sign-in page in a web view (WebView2 on Windows,
-//! WebKitGTK on Linux), run as its own process (`mailcraft --sign-in-window <url>`). It closes
-//! itself once the page sends the browser back to MailCraft's loopback address, where the main
+//! Mailwright's sign-in window: Microsoft's sign-in page in a web view (WebView2 on Windows,
+//! WebKitGTK on Linux), run as its own process (`mailwright --sign-in-window <url>`). It closes
+//! itself once the page sends the browser back to Mailwright's loopback address, where the main
 //! process is waiting for the authorisation code; closing it early cancels the sign-in.
 
 use std::path::Path;
@@ -27,7 +27,7 @@ pub fn run(url: &str, data_dir: &Path) -> Result<(), String> {
     let event_loop = EventLoopBuilder::<Signal>::with_user_event().build();
     let proxy = event_loop.create_proxy();
     let window = WindowBuilder::new()
-        .with_title("Sign in \u{2013} MailCraft")
+        .with_title("Sign in \u{2013} Mailwright")
         .with_inner_size(tao::dpi::LogicalSize::new(520.0, 720.0))
         .with_min_inner_size(tao::dpi::LogicalSize::new(400.0, 520.0))
         .build(&event_loop)

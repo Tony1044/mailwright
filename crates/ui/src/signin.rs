@@ -1,7 +1,7 @@
 //! The first screen: sign in to Microsoft 365 (Exchange Online), or try the sample mailbox.
 
 use egui::{Ui, vec2};
-use mailcraft_graph::GraphError;
+use mailwright_graph::GraphError;
 
 use crate::app::{MailApp, SignInMethod};
 use crate::theme::{Tokens, regular, semibold};
@@ -12,10 +12,10 @@ pub fn explain(e: &GraphError) -> String {
     match e {
         GraphError::Network { host, .. } => format!("Can't reach {host}. Check your internet connection (and proxy) and try again."),
         GraphError::SignInRequired(m) if m.contains("AADSTS700016") => {
-            "Microsoft couldn't find MailCraft's app registration. If your organisation gave you its own Application (client) ID, check it under Advanced.".into()
+            "Microsoft couldn't find Mailwright's app registration. If your organisation gave you its own Application (client) ID, check it under Advanced.".into()
         }
         GraphError::SignInRequired(m) | GraphError::SignInCancelled(m) if m.contains("AADSTS65001") || m.contains("AADSTS90094") || m.contains("consent") || m.contains("admin approval") => {
-            "Your organisation needs an administrator to approve MailCraft before you can sign in. Ask your IT team to approve \u{201c}MailCraft\u{201d} (they can do it from the sign-in page with an admin account, or in Microsoft Entra under Enterprise applications).".into()
+            "Your organisation needs an administrator to approve Mailwright before you can sign in. Ask your IT team to approve \u{201c}Mailwright\u{201d} (they can do it from the sign-in page with an admin account, or in Microsoft Entra under Enterprise applications).".into()
         }
         GraphError::SignInRequired(m) if m.contains("AADSTS50011") => {
             "The redirect URI doesn't match. In the app registration, add the platform \u{201c}Mobile and desktop applications\u{201d} with the redirect URI http://localhost.".into()
@@ -59,7 +59,7 @@ fn card(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
         crate::app_icon::paint(ui.painter(), r);
         ui.add_space(6.0);
         ui.vertical(|ui| {
-            ui.label(egui::RichText::new(if adding { "Add an account" } else { "Welcome to MailCraft" }).font(semibold(22.0)));
+            ui.label(egui::RichText::new(if adding { "Add an account" } else { "Welcome to Mailwright" }).font(semibold(22.0)));
             ui.label(egui::RichText::new("Mail and calendar for Microsoft 365 and Outlook.com").color(t.text_dim));
         });
     });
@@ -137,7 +137,7 @@ fn card(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
     if !app.sessions.iter().any(|s| s.demo) {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Just looking?").color(t.text_dim));
-            if ui.link("Try MailCraft with a sample mailbox").clicked() {
+            if ui.link("Try Mailwright with a sample mailbox").clicked() {
                 app.start_demo();
             }
         });
@@ -151,11 +151,11 @@ fn card(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
         ui.add_space(4.0);
         ui.add(
             egui::Label::new(
-                egui::RichText::new("Only if your organisation asks you to use its own app registration instead of MailCraft's: its Application (client) ID.").font(regular(12.0)).color(t.text_dim),
+                egui::RichText::new("Only if your organisation asks you to use its own app registration instead of Mailwright's: its Application (client) ID.").font(regular(12.0)).color(t.text_dim),
             )
             .wrap(),
         );
-        ui.add(egui::TextEdit::singleline(&mut app.signin.client_id).hint_text("Leave empty to use MailCraft's").desired_width(340.0).margin(vec2(6.0, 4.0)));
+        ui.add(egui::TextEdit::singleline(&mut app.signin.client_id).hint_text("Leave empty to use Mailwright's").desired_width(340.0).margin(vec2(6.0, 4.0)));
     }
 }
 
@@ -179,7 +179,7 @@ fn busy(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
         });
         ui.add_space(4.0);
         let text = match app.signin.method {
-            Some(SignInMethod::InApp) => "Finish signing in in the Microsoft window. If your organisation asks, approve MailCraft's access to your mail and calendar.",
+            Some(SignInMethod::InApp) => "Finish signing in in the Microsoft window. If your organisation asks, approve Mailwright's access to your mail and calendar.",
             _ => "Finish signing in in your browser. When it says you can close the page, come back here.",
         };
         ui.add(egui::Label::new(egui::RichText::new(text).color(t.text_dim)).wrap());

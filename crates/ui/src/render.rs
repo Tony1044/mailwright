@@ -1,9 +1,9 @@
-//! Drawing a parsed HTML body ([`mailcraft_html::Document`]) with egui widgets.
+//! Drawing a parsed HTML body ([`mailwright_html::Document`]) with egui widgets.
 
 use std::collections::HashMap;
 
 use egui::{Color32, FontFamily, FontId, RichText, Sense, Stroke, TextureHandle, Ui, vec2};
-use mailcraft_html::{Align, Block, Cell, Document, Image, ImageSource, Inline, Style};
+use mailwright_html::{Align, Block, Cell, Document, Image, ImageSource, Inline, Style};
 
 use crate::theme::Tokens;
 
