@@ -147,6 +147,11 @@ fn run(h: &mut egui_kittest::Harness<'static, MailApp>, cmd: &str) {
             h.state_mut().settings.reply_signature = "Work".into();
             step(h, 3);
         }
+        "manual-setup" => {
+            h.state_mut().signin.email = "tony@gmail.com".into();
+            h.state_mut().begin_manual();
+            step(h, 4);
+        }
         "auto-reply" => {
             h.state_mut().open_auto_reply(0);
             wait(h, 4000, |a| a.auto_reply.as_ref().is_some_and(|x| !x.loading));

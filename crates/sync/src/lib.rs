@@ -10,6 +10,11 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod mailbox;
+pub mod net_mailbox;
+
+pub use mailbox::Mailbox;
+
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -17,8 +22,8 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
-use mailwright_graph::client::{EventResponse, ReplyKind};
-use mailwright_graph::{GraphClient, GraphError};
+use mailwright_graph::client::EventResponse;
+use mailwright_graph::GraphError;
 use mailwright_store::{Action, Addr, Compose, QueuedAction, Store};
 use serde_json::json;
 
@@ -26,9 +31,10 @@ use serde_json::json;
 pub const CORE_FOLDERS: &[&str] = &["inbox", "drafts", "sentitems", "deleteditems", "outbox"];
 const WELL_KNOWN: &[&str] = &["inbox", "drafts", "sentitems", "deleteditems", "junkemail", "archive", "outbox", "conversationhistory"];
 
+/// What the interface asks the engine to do.
 pub enum Command {
-    /// Signed in: start using this client.
-    Attach(Box<GraphClient>),
+    /// Signed in: start using this mailbox.
+    Attach(Box<dyn Mailbox>),
     /// Send/Receive: a full round now.
     SyncAll,
     /// A folder was opened: bring it into the cache (first time) or up to date.
@@ -152,7 +158,10 @@ enum Bg {
 
 pub struct Engine {
     store: Store,
-    client: Option<Arc<GraphClient>>,
+    client: Option<Arc<dyn Mailbox>>,
+    /// True for a plain IMAP/POP3 account, which syncs by reconciling each folder rather than by
+    /// Graph delta queries.
+    manual: bool,
     tx: Sender<Update>,
     wake: Wake,
     offline: bool,
@@ -202,6 +211,7 @@ impl Engine {
             client: None,
             tx,
             wake,
+            manual: false,
             offline: false,
             connected: false,
             window_days: window_days.clamp(7, 3650),
@@ -306,8 +316,7 @@ impl Engine {
 
     fn handle(&mut self, c: Command) {
         match c {
-            Command::Attach(client) => {
-                let mut client = *client;
+            Command::Attach(mut client) => {
                 self.offline = false;
                 self.last_tree = None;
                 let me = client.me();
@@ -315,7 +324,8 @@ impl Engine {
                     let address = me.mail.clone().filter(|m| !m.is_empty()).or(me.user_principal_name.clone()).unwrap_or_default();
                     let _ = client.set_user(&address, me.display_name.as_deref().unwrap_or(""));
                 }
-                self.client = Some(Arc::new(client));
+                self.manual = client.is_manual();
+                self.client = Some(Arc::from(client));
                 match me {
                     Ok(me) => {
                         let address = me.mail.clone().filter(|m| !m.is_empty()).or(me.user_principal_name.clone()).unwrap_or_default();
@@ -344,7 +354,7 @@ impl Engine {
                 self.selected = Some(id.clone());
                 if self.online() {
                     self.flush();
-                    self.delta(&id);
+                    if self.manual { self.reconcile_folder(&id); } else { self.delta(&id); }
                 }
             }
             Command::Open(id) => self.open(&id),
@@ -502,12 +512,12 @@ impl Engine {
         }
     }
 
-    fn folder_op(&mut self, f: impl FnOnce(&GraphClient) -> Result<(), GraphError>, what: &str) {
+    fn folder_op(&mut self, f: impl FnOnce(&dyn Mailbox) -> Result<(), GraphError>, what: &str) {
         let Some(c) = self.client.clone().filter(|_| !self.offline) else {
             self.emit(Update::Error(format!("{what}: you're offline.")));
             return;
         };
-        match f(&c) {
+        match f(c.as_ref()) {
             Ok(()) => {
                 self.last_tree = None;
                 self.refresh_tree();
@@ -552,13 +562,17 @@ impl Engine {
                 folders.push(s.clone());
             }
         for f in folders {
-            if !self.delta(&f) {
+            let ok = if self.manual { self.reconcile_folder(&f) } else { self.delta(&f) };
+            if !ok {
                 log::info!("round stopped after {:.1}s", started.elapsed().as_secs_f32());
                 return;
             }
         }
-        self.check_inbox();
-        self.refresh_calendar(tree_due);
+        if !self.manual {
+            // The reconcile path already covers the inbox and there is no calendar for plain mailboxes.
+            self.check_inbox();
+            self.refresh_calendar(tree_due);
+        }
         // Quiet-time work: bodies of the last fortnight's mail, for reading offline.
         let core: Vec<String> = ["inbox", "sentitems", "drafts"].iter().filter_map(|wk| self.store.folder_by_well_known(wk).ok().flatten()).collect();
         let since = chrono::Utc::now().timestamp() - 14 * 86_400;
@@ -622,13 +636,60 @@ impl Engine {
     }
 
     /// Bring one folder up to date. False when the round should stop.
+    /// Bring one folder up to date for a plain IMAP/POP3 account: fetch its newest messages
+    /// (cached ones get a flags-only refresh), announce anything new, and drop what the server no
+    /// longer has in that window. False when the round should stop (offline/signed out).
+    fn reconcile_folder(&mut self, folder: &str) -> bool {
+        let Some(c) = self.client.clone() else { return false };
+        let is_inbox = self.store.folder_by_well_known("inbox").ok().flatten().as_deref() == Some(folder);
+        let known = self.store.folder_ids(folder).unwrap_or_default();
+        let msgs = match c.fetch_folder(folder, &known, MAX_FOLDER_FILL) {
+            Ok(m) => m,
+            Err(e) => return self.trouble(&e),
+        };
+        // New, unread, recent messages to announce (only full ones are genuinely new).
+        let lately = chrono::Utc::now().timestamp() - 6 * 3600;
+        let arrived: Vec<NewMail> = msgs
+            .iter()
+            .filter(|m| is_inbox && !known.contains(&m.id))
+            .filter(|m| m.is_read != Some(true) && m.is_draft != Some(true) && mailwright_store::is_whole(m))
+            .filter(|m| m.received_date_time.as_deref().and_then(mailwright_store::parse_time).is_some_and(|t| t >= lately))
+            .map(new_mail)
+            .collect();
+        let seen: std::collections::HashSet<String> = msgs.iter().map(|m| m.id.clone()).collect();
+        if !self.save_listed(c.as_ref(), folder, &msgs) {
+            self.emit(Update::Error("Couldn't save mail to the offline cache. Trying again shortly.".into()));
+            return true;
+        }
+        // Deletions: anything cached within the fetched window that the server didn't return.
+        if seen.len() >= MAX_FOLDER_FILL.min(250) {
+            // The folder is larger than one fetch; don't prune what we didn't look at.
+        } else {
+            let since = self.store.oldest_received(&seen).unwrap_or(0);
+            if since > 0 {
+                match self.store.prune_unseen(folder, since, &seen) {
+                    Ok(0) => {}
+                    Ok(n) => log::info!("{folder}: {n} message(s) no longer on the server"),
+                    Err(e) => log::error!("tidying {folder}: {e}"),
+                }
+            }
+        }
+        if !arrived.is_empty() {
+            self.emit(Update::NewMail(arrived));
+        }
+        self.set_connected(true);
+        self.emit(Update::MessagesChanged);
+        self.emit(Update::FoldersChanged);
+        true
+    }
+
     fn delta(&mut self, folder: &str) -> bool {
         let Some(c) = self.client.clone() else { return false };
         let saved = self.store.delta_link(folder).ok().flatten();
         let first = saved.is_none();
         // First time a folder is synced, fill it newest-first ignoring the offline window, so an
         // archive folder shows its mail as Outlook does rather than just the last few months.
-        if first && !self.fill_folder(&c, folder) {
+        if first && !self.fill_folder(c.as_ref(), folder) {
             return false;
         }
         let since = iso(chrono::Utc::now().timestamp() - self.window_days * 86_400);
@@ -666,14 +727,14 @@ impl Engine {
                 Default::default()
             };
             let mut page = page;
-            self.confirm_removals(&c, folder, &mut page.changed, &mut page.removed);
+            self.confirm_removals(c.as_ref(), folder, &mut page.changed, &mut page.removed);
             let partial = page.changed.iter().filter(|m| !mailwright_store::is_whole(m)).count();
             let elsewhere = page.changed.iter().filter(|m| m.parent_folder_id.as_deref().is_some_and(|p| !p.is_empty() && p != folder)).count();
             if partial > 0 || elsewhere > 0 {
                 log::info!("{folder}: {partial} partial update(s), {elsewhere} naming another folder id");
             }
             seen.extend(page.changed.iter().map(|m| m.id.clone()));
-            let saved_ok = (page.changed.is_empty() || self.save_listed(&c, folder, &page.changed))
+            let saved_ok = (page.changed.is_empty() || self.save_listed(c.as_ref(), folder, &page.changed))
                 && (page.removed.is_empty() || self.store.remove_messages(folder, &page.removed).map_err(|e| log::error!("removing mail in {folder}: {e}")).is_ok());
             if !saved_ok {
                 // Keep the old sync point, so the next round asks for these again.
@@ -726,7 +787,7 @@ impl Engine {
 
     /// Fill a folder with its newest messages, ignoring the offline window, up to a generous cap.
     /// False only when the connection failed (so the round should stop).
-    fn fill_folder(&mut self, c: &GraphClient, folder: &str) -> bool {
+    fn fill_folder(&mut self, c: &dyn Mailbox, folder: &str) -> bool {
         match c.folder_messages_newest(folder, MAX_FOLDER_FILL) {
             Ok(list) => {
                 if !list.is_empty() {
@@ -745,7 +806,7 @@ impl Engine {
 
     /// Save messages listed in `folder`; partial ones not stored yet are fetched whole first.
     /// False when saving failed.
-    fn save_listed(&mut self, c: &GraphClient, folder: &str, msgs: &[mailwright_graph::types::Message]) -> bool {
+    fn save_listed(&mut self, c: &dyn Mailbox, folder: &str, msgs: &[mailwright_graph::types::Message]) -> bool {
         let skipped = match self.store.upsert_messages(folder, msgs) {
             Ok(s) => s,
             Err(e) => {
@@ -782,7 +843,7 @@ impl Engine {
 
     /// Before taking a recent message out of the cache because delta said so, ask the server
     /// whether it's really gone. If it's still in the folder, keep it (and say so in the log).
-    fn confirm_removals(&mut self, c: &GraphClient, folder: &str, changed: &mut Vec<mailwright_graph::types::Message>, removed: &mut Vec<String>) {
+    fn confirm_removals(&mut self, c: &dyn Mailbox, folder: &str, changed: &mut Vec<mailwright_graph::types::Message>, removed: &mut Vec<String>) {
         if removed.is_empty() {
             return;
         }
@@ -1003,7 +1064,7 @@ impl Engine {
                 break;
             }
             let Some(c) = self.client.clone() else { return false };
-            let result = perform(&c, &self.store, &q);
+            let result = perform(c.as_ref(), &self.store, &q);
             match result {
                 Ok(outcome) => {
                     self.set_connected(true);
@@ -1083,7 +1144,7 @@ fn new_mail(m: &mailwright_graph::types::Message) -> NewMail {
     }
 }
 
-fn move_folder(c: &GraphClient, id: &str, dest: &str) -> Result<(), GraphError> {
+fn move_folder(c: &dyn Mailbox, id: &str, dest: &str) -> Result<(), GraphError> {
     c.move_folder(id, dest)
 }
 
@@ -1094,7 +1155,7 @@ struct Outcome {
     event: Option<mailwright_graph::types::Event>,
 }
 
-fn compose_patch(compose: &Compose, include_body: bool) -> serde_json::Value {
+pub(crate) fn compose_patch(compose: &Compose, include_body: bool) -> serde_json::Value {
     let mut v = json!({
         "subject": compose.subject,
         "toRecipients": compose.to.iter().map(Addr::to_graph).collect::<Vec<_>>(),
@@ -1110,7 +1171,7 @@ fn compose_patch(compose: &Compose, include_body: bool) -> serde_json::Value {
 }
 
 /// Do one queued change on the server.
-fn perform(c: &GraphClient, store: &Store, q: &QueuedAction) -> Result<Outcome, GraphError> {
+fn perform(c: &dyn Mailbox, store: &Store, q: &QueuedAction) -> Result<Outcome, GraphError> {
     let local = |id: &str| id.starts_with("local:");
     match &q.action {
         Action::SetRead { id, .. } | Action::SetFlag { id, .. } | Action::SetCategories { id, .. } | Action::Delete { id } | Action::Move { id, .. } if local(id) => Ok(Outcome::default()),
@@ -1124,48 +1185,8 @@ fn perform(c: &GraphClient, store: &Store, q: &QueuedAction) -> Result<Outcome, 
         Action::Delete { id } => c.delete_message(id).map(|_| Outcome::default()),
         Action::Send { compose } | Action::SaveDraft { compose } => {
             let send = matches!(q.action, Action::Send { .. });
-            let mut compose = compose.clone();
-            // 1. A draft on the server.
-            let draft_id = match (&compose.draft_id, &compose.reply_to) {
-                (Some(d), _) => match c.update_draft(d, &compose_patch(&compose, true)) {
-                    Ok(m) => m.id,
-                    Err(e) if e.is_not_found() => {
-                        let mut full = compose_patch(&compose, true);
-                        full["body"] = json!({"contentType": "html", "content": compose.html});
-                        c.create_draft(&full)?.id
-                    }
-                    Err(e) => return Err(e),
-                },
-                (None, Some((orig, kind))) => {
-                    let kind = match kind.as_str() {
-                        "replyAll" => ReplyKind::ReplyAll,
-                        "forward" => ReplyKind::Forward,
-                        _ => ReplyKind::Reply,
-                    };
-                    let d = c.create_reply(orig, kind)?;
-                    c.update_draft(&d.id, &compose_patch(&compose, true))?;
-                    d.id
-                }
-                (None, None) => c.create_draft(&compose_patch(&compose, true))?.id,
-            };
-            // Remember the draft so a retry doesn't make another.
-            compose.draft_id = Some(draft_id.clone());
-            compose.reply_to = None;
-            let mut updated = if send { Action::Send { compose: compose.clone() } } else { Action::SaveDraft { compose: compose.clone() } };
-            let _ = store.update_action(q.seq, &updated);
-            // 2. Attachments, one at a time, each remembered once it's there.
-            while let Some(a) = compose.attachments.first().cloned() {
-                let bytes = base64::engine::general_purpose::STANDARD.decode(a.data.as_bytes()).map_err(|e| GraphError::BadResponse(format!("{}: {e}", a.name)))?;
-                c.add_attachment(&draft_id, &a.name, &a.content_type, &bytes, a.content_id.as_deref())?;
-                compose.attachments.remove(0);
-                updated = if send { Action::Send { compose: compose.clone() } } else { Action::SaveDraft { compose: compose.clone() } };
-                let _ = store.update_action(q.seq, &updated);
-            }
-            // 3. Send.
-            if send {
-                c.send_draft(&draft_id)?;
-            }
-            Ok(Outcome { draft_id: Some(draft_id), ..Default::default() })
+            let out = c.submit(compose, send, store, q.seq)?;
+            Ok(Outcome { draft_id: out.draft_id, ..Default::default() })
         }
         Action::CreateEvent { calendar_id, body, .. } => Ok(Outcome { event: Some(c.create_event(calendar_id, body)?), ..Default::default() }),
         Action::UpdateEvent { id, patch } => {

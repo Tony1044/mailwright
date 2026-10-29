@@ -522,6 +522,27 @@ impl Store {
         Ok(out)
     }
 
+    /// Every cached message id in a folder (not local drafts), for reconciling an IMAP folder.
+    pub fn folder_ids(&self, folder: &str) -> Result<std::collections::HashSet<String>> {
+        let mut st = self.db.prepare("SELECT id FROM messages WHERE folder_id = ?1 AND pending = 0 AND id NOT LIKE 'local:%'")?;
+        let rows = st.query_map([folder], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// The earliest received time among these ids, for bounding a prune window. 0 if none.
+    pub fn oldest_received(&self, ids: &std::collections::HashSet<String>) -> Result<i64> {
+        let mut oldest = i64::MAX;
+        let mut st = self.db.prepare_cached("SELECT received FROM messages WHERE id = ?1")?;
+        for id in ids {
+            if let Some(r) = st.query_row([id], |r| r.get::<_, i64>(0)).optional()? {
+                if r > 0 {
+                    oldest = oldest.min(r);
+                }
+            }
+        }
+        Ok(if oldest == i64::MAX { 0 } else { oldest })
+    }
+
     /// Delta said these are gone from a folder.
     pub fn remove_messages(&mut self, folder: &str, ids: &[String]) -> Result<()> {
         let tx = self.db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;

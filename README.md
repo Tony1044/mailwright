@@ -1,11 +1,12 @@
 # Mailwright
 
-A classic desktop mail and calendar client for Microsoft 365 – Exchange Online through Microsoft Graph – written in Rust with no `unsafe` code. One standalone `.exe` for Windows; one `.deb` for Ubuntu.
+A classic desktop mail and calendar client written in Rust. It works with Microsoft 365 (Exchange Online through Microsoft Graph), with Outlook.com, and with any other mailbox over IMAP or POP3 for receiving and SMTP for sending. One standalone `.exe` for Windows; one `.deb` for Ubuntu.
 
 - **Mail:** folder tree with Favorites, Focused/Other, a message list grouped by date, a reading pane (right, bottom or off), HTML mail drawn safely (pictures from the web blocked until you allow them), attachments (open, save, save all), new mail, reply, reply all and forward with attachments, drafts, flags, categories, read/unread, move (menu or drag to a folder), delete, archive, search (offline, or on the server), new/rename/delete folders, empty Deleted Items.
 - **Calendar:** Day, Work Week, Week and Month, a date navigator, new appointments and meetings (with attendees and an online meeting link), editing, cancelling, and Accept/Tentative/Decline – from the calendar or from the meeting request in your Inbox.
 - **Offline:** the last three months of mail (configurable) are kept in a local SQLite database with full-text search, kept in step with Graph delta queries. Everything you do offline is queued and sent when you're back online.
-- **Sign-in:** Microsoft's own page in your browser (authorization code + PKCE, so MFA and conditional access work), or a device code. The refresh token lives in Windows Credential Manager or the desktop keyring.
+- **Sign-in:** for Microsoft 365, Microsoft's own page in your browser (authorization code + PKCE, so MFA and conditional access work), or a device code. For other mailboxes, a simple IMAP/POP3 + SMTP setup form that fills in the servers for common providers. The refresh token or password lives in Windows Credential Manager or the desktop keyring.
+- **Any mailbox:** IMAP (mail kept on the server) or POP3 (downloaded), with SMTP for sending; all over TLS using the same pure-Rust stack, so there are still no extra DLLs. Calendar, contacts, and automatic replies are Microsoft 365 features.
 
 There is nothing to set up first: type your email address and sign in, as in Outlook. See [docs/SETUP.md](docs/SETUP.md) for details, including what an IT administrator may need to approve. To look around without an account, choose **Try Mailwright with a sample mailbox** on the first screen.
 

@@ -22,5 +22,5 @@ pub mod tokens;
 pub mod types;
 
 pub use client::GraphClient;
-pub use config::AccountConfig;
+pub use config::{AccountConfig, MailProtocol, ManualConfig, Security, ServerConfig};
 pub use error::GraphError;

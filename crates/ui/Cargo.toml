@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 mailwright-graph = { workspace = true }
+mailwright-net = { workspace = true }
 mailwright-store = { workspace = true }
 mailwright-sync = { workspace = true }
 mailwright-html = { workspace = true }

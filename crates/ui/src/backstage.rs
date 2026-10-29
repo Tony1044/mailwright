@@ -92,6 +92,9 @@ fn info(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
                     ui.label(egui::RichText::new(&s.address).color(t.text_dim));
                     let kind = if s.demo {
                         "Sample mailbox (on this computer)".to_string()
+                    } else if let Some(m) = &s.account.manual {
+                        let proto = if m.protocol == mailwright_graph::MailProtocol::Imap { "IMAP" } else { "POP3" };
+                        format!("{proto} {} \u{00b7} SMTP {}", m.incoming.host, m.smtp.host)
                     } else if s.account.tenant == "consumers" {
                         "Outlook.com, through Microsoft Graph".to_string()
                     } else {
@@ -127,7 +130,7 @@ fn info(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
                 if s.needs_sign_in.is_some() && widgets::icon_text(ui, "lock", "Sign in again", true).clicked() {
                     reauth = Some(i);
                 }
-                if !s.demo && s.needs_sign_in.is_none() && widgets::icon_text(ui, "clock", "Automatic Replies", true).clicked() {
+                if !s.demo && !s.account.is_manual() && s.needs_sign_in.is_none() && widgets::icon_text(ui, "clock", "Automatic Replies", true).clicked() {
                     auto_reply = Some(i);
                 }
                 if widgets::icon_text(ui, "sign_out", "Remove Account", true).clicked() {

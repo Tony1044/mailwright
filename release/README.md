@@ -1,11 +1,18 @@
-# Mailwright 0.3.0 binaries
+# Mailwright 0.4.0 binaries
 
 | File | For |
 | --- | --- |
 | `mailwright.exe` | Windows 10 and 11 (64-bit). A single file: no installer, no extra DLLs. |
-| `mailwright_0.3.0-1_amd64.deb` | Ubuntu 24.04 or later (64-bit). Install with `sudo apt install ./mailwright_0.3.0-1_amd64.deb` (it replaces MailCraft if that's installed). |
+| `mailwright_0.4.0-1_amd64.deb` | Ubuntu 24.04 or later (64-bit). Install with `sudo apt install ./mailwright_0.4.0-1_amd64.deb` (it replaces MailCraft if that's installed). |
 
-## What's new in 0.3.0
+## What's new in 0.4.0
+
+- IMAP, POP3, and SMTP: Mailwright now works with any mailbox, not only Microsoft 365. Choose **Set up an IMAP or POP account** on the first screen, type your address and password, and Mailwright fills in the servers for common providers (Gmail, Yahoo, iCloud, Outlook.com, Fastmail, GMX, AOL) or guesses them from your domain.
+  - IMAP keeps mail on the server and in step across devices; POP3 downloads it. Sending is over SMTP, with a copy filed in your Sent folder (IMAP).
+  - Reading, flagging, moving, deleting, searching, writing, replying, forwarding, attachments, and signatures all work the same. Calendar, contacts, and automatic replies stay Microsoft 365 features.
+  - All connections are encrypted (SSL/TLS or STARTTLS), using the same Rust TLS stack as the rest of Mailwright, so the Windows build is still a single file with no extra DLLs.
+
+## In 0.3.0
 
 - Address suggestions when composing can now be clicked, and you can move through them with the arrow keys and accept with Enter or Tab.
 - Signatures: keep several named signatures (**File › Options › Signatures**), choose one for new messages and one for replies and forwards, and switch signature in a message from the **Signature** button. An earlier single signature is kept as "My signature".

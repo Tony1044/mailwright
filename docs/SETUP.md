@@ -1,8 +1,8 @@
 # Getting started with Mailwright
 
-Mailwright works with Microsoft 365 work and school accounts (Exchange Online) and personal Outlook.com accounts, through Microsoft Graph. There's nothing to set up first.
+Mailwright works with Microsoft 365 work and school accounts (Exchange Online) and personal Outlook.com accounts through Microsoft Graph, and with any other mailbox over IMAP or POP3 for receiving and SMTP for sending (Gmail, Yahoo, iCloud, Fastmail, your own server, and so on). There's nothing to set up first.
 
-## Adding an account
+## Adding a Microsoft 365 or Outlook.com account
 
 1. Start Mailwright and type your email address. Select **Connect**.
 2. Mailwright works out what kind of account it is, as Outlook does: it asks Microsoft about your address, and checks where your domain's mail is delivered (its MX records). It tells you what it found – a Microsoft 365 account for your organisation, an Outlook.com account, or mail that's hosted somewhere else (Google, for example), which Mailwright can't open.
@@ -10,6 +10,21 @@ Mailwright works with Microsoft 365 work and school accounts (Exchange Online) a
 4. The first time, Microsoft asks you to let Mailwright read and send your mail and manage your calendar. Accept, and your mail starts to arrive.
 
 To add more accounts, select **Add Account** at the foot of the folder pane, or **File › Info › Add Account**. Each account has its own folder tree; new mail has a **From** box to choose the account; and the calendar shows every account's calendars together.
+
+## Adding an IMAP or POP account
+
+For any other mailbox, choose **Set up an IMAP or POP account** on the first screen (under the email box).
+
+1. Type your email address and password. For most providers you can leave the servers as Mailwright suggests; it fills them in for common ones (Gmail, Yahoo, iCloud, Outlook.com, Fastmail, GMX, AOL) and otherwise guesses `imap.` and `smtp.` on your domain.
+2. Choose **IMAP** (which keeps your mail on the server and in step across devices, recommended) or **POP3** (which downloads your mail). Check the incoming and outgoing server names, ports, and security if you need to.
+3. Select **Add account**. Mailwright checks the servers and your sign-in, then starts bringing in your mail.
+
+A few provider notes:
+
+- **Gmail, Yahoo, iCloud, AOL** need an **app password**, not your normal password, and Gmail needs IMAP turned on in its settings. Mailwright shows a reminder for the provider it recognises.
+- IMAP connections use SSL/TLS (port 993); SMTP uses SSL/TLS (465) or STARTTLS (587), filled in for you.
+- IMAP and POP accounts don't have a calendar, contacts, or automatic replies (those are Microsoft 365 features). Everything else – reading, flagging, moving, deleting, searching, writing, replying, forwarding, attachments, and signatures – works the same.
+- With POP3, mail is downloaded and there are no server folders, so read and flag changes are kept on this computer only, and there's just an Inbox.
 
 ### If your organisation asks for approval
 

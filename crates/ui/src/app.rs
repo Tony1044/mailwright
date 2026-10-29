@@ -13,7 +13,8 @@ use mailwright_graph::tokens::{MemoryTokenStore, SystemTokenStore, TokenStore};
 use mailwright_graph::discovery::{Discovery, DiscoveryConfig, discover};
 use mailwright_graph::{AccountConfig, GraphClient, GraphError};
 use mailwright_store::{Action, Addr, AttachmentRow, EventRow, FolderRow, ListFilter, MessageRow, SortBy, Store};
-use mailwright_sync::{Command, SyncHandle, Update};
+use mailwright_sync::{Command, Mailbox, SyncHandle, Update};
+use mailwright_sync::net_mailbox::NetMailbox;
 
 use crate::calendar::CalState;
 use crate::compose::ComposeWin;
@@ -36,12 +37,14 @@ pub enum Backstage {
 
 /// Messages from helper threads.
 pub enum AppMsg {
-    SignedIn(Result<(Box<GraphClient>, String, String), GraphError>),
+    SignedIn(Result<(Box<dyn Mailbox>, String, String), GraphError>),
     /// A saved sign-in resumed (or not), for the account with this address.
-    Resumed(String, Result<Box<GraphClient>, GraphError>),
+    Resumed(String, Result<Box<dyn Mailbox>, GraphError>),
     DeviceCode(DeviceCode),
     Discovered(String, Result<Discovery, GraphError>),
     RemoteImage { url: String, bytes: Option<Vec<u8>> },
+    /// A manual IMAP/POP3 account was tested: the account and its password, or why it failed.
+    ManualTested(Result<(AccountConfig, String, String), GraphError>),
 }
 
 /// Opens Mailwright's own sign-in window on a URL (a separate process with a web view).
@@ -146,6 +149,26 @@ pub struct SignInState {
     pub error: Option<String>,
     /// Adding another account (the sign-in page over the mailbox).
     pub adding: bool,
+    /// The manual IMAP/POP3 setup form, while it's open.
+    pub manual: Option<ManualForm>,
+}
+
+/// The editable fields of the IMAP/POP3 + SMTP setup form. Ports are text so they can be typed.
+#[derive(Default)]
+pub struct ManualForm {
+    pub email: String,
+    pub name: String,
+    pub password: String,
+    pub protocol: mailwright_graph::MailProtocol,
+    pub in_host: String,
+    pub in_port: String,
+    pub in_security: mailwright_graph::Security,
+    pub smtp_host: String,
+    pub smtp_port: String,
+    pub smtp_security: mailwright_graph::Security,
+    pub note: String,
+    pub busy: bool,
+    pub error: Option<String>,
 }
 
 pub struct MailApp {
@@ -206,6 +229,17 @@ pub struct MailApp {
 /// Mailwright draws its own Desktop Alert (Windows; elsewhere with MAILWRIGHT_OWN_ALERT set).
 fn own_alert() -> bool {
     cfg!(windows) || std::env::var_os("MAILWRIGHT_OWN_ALERT").is_some()
+}
+
+/// Open the right backend for a saved account: a plain IMAP/POP3 mailbox when it has manual
+/// settings, otherwise the Microsoft 365 (Graph) client.
+fn open_saved_backend(account: AccountConfig, store: std::sync::Arc<dyn TokenStore>) -> Result<Box<dyn Mailbox>, GraphError> {
+    if account.is_manual() {
+        let pw = store.load(&account.username)?.ok_or_else(|| GraphError::SignInRequired("Enter your password again for this mailbox.".into()))?;
+        Ok(Box::new(NetMailbox::new(account, pw)?))
+    } else {
+        Ok(Box::new(GraphClient::from_saved(account, store)?))
+    }
 }
 
 fn safe_name(s: &str) -> String {
@@ -333,7 +367,7 @@ impl MailApp {
     /// Open the cache and start syncing for `account`, as one more mailbox (or in place of the
     /// same one). With `client`, already signed in; otherwise the saved sign-in is resumed in the
     /// background. Returns its index.
-    pub fn start_session(&mut self, account: AccountConfig, demo: bool, client: Option<Box<GraphClient>>) -> Option<usize> {
+    pub fn start_session(&mut self, account: AccountConfig, demo: bool, client: Option<Box<dyn Mailbox>>) -> Option<usize> {
         if let Some(i) = self.session_by_address(&account.username) {
             self.sessions.remove(i);
             if self.active >= self.sessions.len() {
@@ -371,7 +405,7 @@ impl MailApp {
             let wake = self.wake();
             let key = address.clone();
             std::thread::spawn(move || {
-                let r = GraphClient::from_saved(acc, store_t).map(Box::new);
+                let r = open_saved_backend(acc, store_t);
                 let _ = tx.send(AppMsg::Resumed(key, r));
                 wake();
             });
@@ -433,6 +467,7 @@ impl MailApp {
             display_name: mockgraph::ME_NAME.into(),
             login_base: Some(mock.login_base()),
             graph_base: Some(mock.graph_base()),
+            manual: None,
         };
         let store = self.token_store(true);
         let _ = store.save(&account.username, &mock.grant_refresh_token());
@@ -444,7 +479,7 @@ impl MailApp {
         match GraphClient::from_saved(account.clone(), store) {
             Ok(c) => {
                 self.demo = Some(mock);
-                if let Some(i) = self.start_session(account, true, Some(Box::new(c))) {
+                if let Some(i) = self.start_session(account, true, Some(Box::new(c) as Box<dyn Mailbox>)) {
                     self.activate(i);
                 }
                 self.signin.adding = false;
@@ -473,6 +508,108 @@ impl MailApp {
             let _ = tx.send(AppMsg::Discovered(email, r));
             wake();
         });
+    }
+
+    /// Open the manual IMAP/POP3 + SMTP setup form, pre-filled from the typed address.
+    pub fn begin_manual(&mut self) {
+        let email = self.signin.email.trim().to_string();
+        let (cfg, note) = mailwright_net::providers::suggest(&email);
+        self.signin.error = None;
+        self.signin.manual = Some(ManualForm {
+            email: email.clone(),
+            name: String::new(),
+            password: String::new(),
+            protocol: cfg.protocol,
+            in_host: cfg.incoming.host,
+            in_port: cfg.incoming.port.to_string(),
+            in_security: cfg.incoming.security,
+            smtp_host: cfg.smtp.host,
+            smtp_port: cfg.smtp.port.to_string(),
+            smtp_security: cfg.smtp.security,
+            note,
+            busy: false,
+            error: None,
+        });
+    }
+
+    /// Build the account from the manual form and test it in the background.
+    pub fn test_and_add_manual(&mut self) {
+        use mailwright_graph::{ManualConfig, ServerConfig};
+        let Some(form) = self.signin.manual.as_ref() else { return };
+        // Copy out what we need, so we can validate against the rest of the app without a borrow clash.
+        let (email, name, password) = (form.email.trim().to_string(), form.name.trim().to_string(), form.password.clone());
+        let (in_host, in_port_s, in_security) = (form.in_host.trim().to_string(), form.in_port.trim().to_string(), form.in_security);
+        let (smtp_host, smtp_port_s, smtp_security) = (form.smtp_host.trim().to_string(), form.smtp_port.trim().to_string(), form.smtp_security);
+        let protocol = form.protocol;
+
+        let fail = |app: &mut MailApp, msg: &str| {
+            if let Some(f) = app.signin.manual.as_mut() {
+                f.error = Some(msg.to_string());
+            }
+        };
+        if !mailwright_graph::discovery::valid_email(&email) {
+            return fail(self, "Enter your email address, like name@example.com.");
+        }
+        if self.session_by_address(&email).is_some() {
+            return fail(self, &format!("{email} is already in Mailwright."));
+        }
+        if password.is_empty() || in_host.is_empty() || smtp_host.is_empty() {
+            return fail(self, "Fill in your password and the server names.");
+        }
+        let (in_port, smtp_port): (u16, u16) = (in_port_s.parse().unwrap_or(0), smtp_port_s.parse().unwrap_or(0));
+        if in_port == 0 || smtp_port == 0 {
+            return fail(self, "Check the port numbers.");
+        }
+        let manual = ManualConfig {
+            protocol,
+            incoming: ServerConfig { host: in_host, port: in_port, security: in_security },
+            smtp: ServerConfig { host: smtp_host, port: smtp_port, security: smtp_security },
+            login: email.clone(),
+        };
+        let account = AccountConfig { username: email, display_name: name, manual: Some(manual), ..Default::default() };
+        if let Some(f) = self.signin.manual.as_mut() {
+            f.error = None;
+            f.busy = true;
+        }
+        let (tx, wake) = (self.tx.clone(), self.wake());
+        std::thread::spawn(move || {
+            let r = NetMailbox::check(&account, &password).map(|_| (account, password, String::new()));
+            let _ = tx.send(AppMsg::ManualTested(r));
+            wake();
+        });
+    }
+
+    /// A manual account tested successfully: save its password, remember it, and start syncing.
+    fn manual_added(&mut self, account: AccountConfig, password: String) {
+        let store = self.token_store(false);
+        if let Err(e) = store.save(&account.username, &password) {
+            self.signin.manual = Some(ManualForm { error: Some(format!("Couldn't save the password: {e}")), ..self.signin.manual.take().unwrap_or_default() });
+            return;
+        }
+        match self.settings.accounts.iter_mut().find(|a| a.username.eq_ignore_ascii_case(&account.username)) {
+            Some(a) => *a = account.clone(),
+            None => self.settings.accounts.push(account.clone()),
+        }
+        self.save_settings();
+        let client: Box<dyn Mailbox> = match NetMailbox::new(account.clone(), password) {
+            Ok(c) => Box::new(c),
+            Err(e) => {
+                if let Some(f) = self.signin.manual.as_mut() {
+                    f.busy = false;
+                    f.error = Some(e.to_string());
+                }
+                return;
+            }
+        };
+        if let Some(i) = self.start_session(account, false, Some(client)) {
+            self.activate(i);
+            self.view = View::Mail;
+        }
+        self.signin.manual = None;
+        self.signin.adding = false;
+        self.signin.email.clear();
+        self.signin.discovery = None;
+        self.backstage = None;
     }
 
     /// Sign in to the discovered account.
@@ -569,7 +706,7 @@ impl MailApp {
                 let address = me.mail.clone().filter(|m| !m.is_empty()).or(me.user_principal_name.clone()).unwrap_or_default();
                 let name = me.display_name.clone().unwrap_or_default();
                 client.set_user(&address, &name)?;
-                Ok((Box::new(client), name, address))
+                Ok((Box::new(client) as Box<dyn Mailbox>, name, address))
             });
             let _ = tx.send(AppMsg::SignedIn(result));
             wake();
@@ -889,6 +1026,13 @@ impl MailApp {
             AppMsg::RemoteImage { url, bytes } => {
                 let tex = bytes.and_then(|b| crate::render::decode_texture(ctx, &url, &b));
                 self.remote.insert(url, tex);
+            }
+            AppMsg::ManualTested(Ok((account, password, _))) => self.manual_added(account, password),
+            AppMsg::ManualTested(Err(e)) => {
+                if let Some(f) = self.signin.manual.as_mut() {
+                    f.busy = false;
+                    f.error = Some(crate::signin::explain(&e));
+                }
             }
         }
     }

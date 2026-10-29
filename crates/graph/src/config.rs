@@ -56,6 +56,59 @@ pub struct AccountConfig {
     pub login_base: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub graph_base: Option<String>,
+    /// Set for a plain IMAP/POP3 + SMTP mailbox instead of Microsoft 365. When present, the account
+    /// uses these servers rather than Microsoft Graph.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manual: Option<ManualConfig>,
+}
+
+impl AccountConfig {
+    /// Whether this is a plain IMAP/POP3 mailbox rather than a Microsoft 365 one.
+    pub fn is_manual(&self) -> bool {
+        self.manual.is_some()
+    }
+}
+
+/// How a message is received from a plain mailbox.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum MailProtocol {
+    #[default]
+    Imap,
+    Pop,
+}
+
+/// How a connection to a server is secured.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum Security {
+    /// Secure from the first byte (implicit TLS): IMAP 993, POP3 995, SMTP 465.
+    #[default]
+    Tls,
+    /// Start plain, then upgrade with STARTTLS: usually SMTP 587, IMAP 143.
+    StartTls,
+    /// No encryption (not recommended; for a local server only).
+    None,
+}
+
+/// One server's address.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ServerConfig {
+    pub host: String,
+    pub port: u16,
+    pub security: Security,
+}
+
+/// A plain mailbox's incoming (IMAP/POP3) and outgoing (SMTP) servers.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ManualConfig {
+    pub protocol: MailProtocol,
+    pub incoming: ServerConfig,
+    pub smtp: ServerConfig,
+    /// The user name to sign in with (often the email address itself).
+    pub login: String,
 }
 
 impl AccountConfig {

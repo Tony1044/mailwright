@@ -1,0 +1,27 @@
+[package]
+name = "mailwright-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "IMAP, POP3 and SMTP backends for Mailwright: generic mailboxes over the same model as the Graph client"
+
+[lints]
+workspace = true
+
+[dependencies]
+mailwright-graph = { workspace = true }
+mailwright-store = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+chrono = { workspace = true }
+base64 = { workspace = true }
+
+imap = { version = "2.4", default-features = false }
+mail-parser = "0.11"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-platform-verifier = "0.7"
+rustls-pki-types = "1"
+
+[dev-dependencies]
+mailwright-store = { workspace = true }

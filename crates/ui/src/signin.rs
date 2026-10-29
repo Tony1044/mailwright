@@ -53,6 +53,10 @@ pub fn screen(app: &mut MailApp, ui: &mut Ui) {
 }
 
 fn card(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
+    if app.signin.manual.is_some() {
+        manual_card(app, ui, t);
+        return;
+    }
     let adding = app.signin.adding && !app.sessions.is_empty();
     ui.horizontal(|ui| {
         let (r, _) = ui.allocate_exact_size(vec2(40.0, 40.0), egui::Sense::hover());
@@ -134,6 +138,13 @@ fn card(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
     ui.add_space(16.0);
     ui.separator();
     ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Not Microsoft 365?").color(t.text_dim));
+        if ui.link("Set up an IMAP or POP account").clicked() {
+            app.begin_manual();
+        }
+    });
+    ui.add_space(6.0);
     if !app.sessions.iter().any(|s| s.demo) {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Just looking?").color(t.text_dim));
@@ -188,4 +199,118 @@ fn busy(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
     if widgets::secondary(ui, "Cancel").clicked() {
         app.cancel_sign_in();
     }
+}
+
+/// The IMAP/POP3 + SMTP setup form.
+fn manual_card(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
+    use mailwright_graph::{MailProtocol, Security};
+    ui.horizontal(|ui| {
+        let (r, _) = ui.allocate_exact_size(vec2(40.0, 40.0), egui::Sense::hover());
+        crate::app_icon::paint(ui.painter(), r);
+        ui.add_space(6.0);
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new("Set up a mail account").font(semibold(22.0)));
+            ui.label(egui::RichText::new("IMAP or POP3 for receiving, SMTP for sending").color(t.text_dim));
+        });
+    });
+    ui.add_space(14.0);
+    let Some(f) = app.signin.manual.as_mut() else { return };
+    if f.busy {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label(egui::RichText::new("Checking the servers and your sign-in\u{2026}").color(t.text_dim));
+        });
+        return;
+    }
+    let field = |ui: &mut Ui, label: &str, value: &mut String, hint: &str, width: f32| {
+        ui.horizontal(|ui| {
+            ui.add_sized(vec2(130.0, 24.0), egui::Label::new(egui::RichText::new(label).color(t.text_dim)));
+            ui.add(egui::TextEdit::singleline(value).hint_text(hint).desired_width(width).margin(vec2(6.0, 4.0)));
+        });
+    };
+    field(ui, "Email address", &mut f.email, "name@example.com", 300.0);
+    field(ui, "Your name", &mut f.name, "shown on messages you send", 300.0);
+    ui.horizontal(|ui| {
+        ui.add_sized(vec2(130.0, 24.0), egui::Label::new(egui::RichText::new("Password").color(t.text_dim)));
+        ui.add(egui::TextEdit::singleline(&mut f.password).password(true).hint_text("your password or app password").desired_width(300.0).margin(vec2(6.0, 4.0)));
+    });
+    if !f.note.trim().is_empty() {
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(egui::RichText::new(&f.note).font(regular(12.0)).color(t.high)).wrap());
+    }
+    ui.add_space(10.0);
+
+    // Incoming.
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Incoming mail").font(semibold(13.0)));
+        egui::ComboBox::from_id_salt("in_proto").selected_text(if f.protocol == MailProtocol::Imap { "IMAP" } else { "POP3" }).show_ui(ui, |ui| {
+            ui.selectable_value(&mut f.protocol, MailProtocol::Imap, "IMAP (keeps mail on the server)");
+            ui.selectable_value(&mut f.protocol, MailProtocol::Pop, "POP3 (downloads mail)");
+        });
+    });
+    server_row(ui, t, "Server", &mut f.in_host, &mut f.in_port, &mut f.in_security, incoming_kind(f.protocol));
+    ui.add_space(8.0);
+
+    // Outgoing.
+    ui.label(egui::RichText::new("Outgoing mail (SMTP)").font(semibold(13.0)));
+    server_row(ui, t, "Server", &mut f.smtp_host, &mut f.smtp_port, &mut f.smtp_security, mailwright_net::providers::Kind::Smtp);
+    ui.add_space(12.0);
+
+    if let Some(e) = &f.error {
+        widgets::info_bar(ui, "info", e, true, None);
+        ui.add_space(8.0);
+    }
+    let mut add = false;
+    let mut cancel = false;
+    ui.horizontal(|ui| {
+        if widgets::primary(ui, "Add account").clicked() {
+            add = true;
+        }
+        if widgets::secondary(ui, "Cancel").clicked() {
+            cancel = true;
+        }
+    });
+    let _ = Security::Tls;
+    if add {
+        app.test_and_add_manual();
+    }
+    if cancel {
+        app.signin.manual = None;
+    }
+}
+
+fn incoming_kind(p: mailwright_graph::MailProtocol) -> mailwright_net::providers::Kind {
+    match p {
+        mailwright_graph::MailProtocol::Imap => mailwright_net::providers::Kind::Imap,
+        mailwright_graph::MailProtocol::Pop => mailwright_net::providers::Kind::Pop,
+    }
+}
+
+fn server_row(ui: &mut Ui, t: &Tokens, label: &str, host: &mut String, port: &mut String, security: &mut mailwright_graph::Security, kind: mailwright_net::providers::Kind) {
+    use mailwright_graph::Security;
+    ui.horizontal(|ui| {
+        ui.add_sized(vec2(130.0, 24.0), egui::Label::new(egui::RichText::new(label).color(t.text_dim)));
+        ui.add(egui::TextEdit::singleline(host).hint_text("imap.example.com").desired_width(240.0).margin(vec2(6.0, 4.0)));
+        ui.label(egui::RichText::new("Port").color(t.text_dim));
+        ui.add(egui::TextEdit::singleline(port).desired_width(60.0).margin(vec2(6.0, 4.0)));
+    });
+    ui.horizontal(|ui| {
+        ui.add_space(130.0);
+        let before = *security;
+        egui::ComboBox::from_id_salt(("sec", label as *const str as *const () as usize + host.len()))
+            .selected_text(match security {
+                Security::Tls => "SSL/TLS",
+                Security::StartTls => "STARTTLS",
+                Security::None => "None",
+            })
+            .show_ui(ui, |ui| {
+                ui.selectable_value(security, Security::Tls, "SSL/TLS");
+                ui.selectable_value(security, Security::StartTls, "STARTTLS");
+                ui.selectable_value(security, Security::None, "None");
+            });
+        // When the security changes, offer the standard port for it.
+        if *security != before {
+            *port = mailwright_net::providers::default_port(kind, *security).to_string();
+        }
+    });
 }
