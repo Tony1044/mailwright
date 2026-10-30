@@ -2958,7 +2958,7 @@ dependencies = [
 
 [[package]]
 name = "mailwright"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "chrono",
  "dirs 6.0.0",
@@ -2976,7 +2976,7 @@ dependencies = [
 
 [[package]]
 name = "mailwright-graph"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2995,7 +2995,7 @@ dependencies = [
 
 [[package]]
 name = "mailwright-html"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "base64 0.22.1",
  "ego-tree",
@@ -3004,7 +3004,7 @@ dependencies = [
 
 [[package]]
 name = "mailwright-net"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3022,7 +3022,7 @@ dependencies = [
 
 [[package]]
 name = "mailwright-store"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "chrono",
  "log",
@@ -3035,7 +3035,7 @@ dependencies = [
 
 [[package]]
 name = "mailwright-sync"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3049,7 +3049,7 @@ dependencies = [
 
 [[package]]
 name = "mailwright-ui"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3078,7 +3078,7 @@ dependencies = [
 
 [[package]]
 name = "mailwright-winshell"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "log",
  "windows",
@@ -3179,7 +3179,7 @@ dependencies = [
 
 [[package]]
 name = "mockgraph"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",

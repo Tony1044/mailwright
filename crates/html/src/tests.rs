@@ -115,3 +115,23 @@ fn colours() {
     assert_eq!(parse_color("Navy"), Some([0, 0, 128]));
     assert_eq!(parse_color("#12345"), None);
 }
+
+#[test]
+fn transparent_colours_are_not_opaque_black() {
+    // A fully transparent colour is "no colour", never solid black.
+    assert_eq!(parse_color("rgba(0,0,0,0)"), None);
+    assert_eq!(parse_color("rgba(0, 0, 0, 0)"), None);
+    assert_eq!(parse_color("rgba(255,255,255,0)"), None);
+    assert_eq!(parse_color("#00000000"), None);
+    assert_eq!(parse_color("#0000"), None);
+    // Any non-zero alpha keeps the colour.
+    assert_eq!(parse_color("rgba(249,66,58,1)"), Some([249, 66, 58]));
+    assert_eq!(parse_color("rgba(10, 20, 30, 0.5)"), Some([10, 20, 30]));
+    assert_eq!(parse_color("rgba(10, 20, 30)"), Some([10, 20, 30]));
+    assert_eq!(parse_color("#000000ff"), Some([0, 0, 0]));
+
+    // A transparent background must not become a black box behind the text.
+    let d = parse("<div style=\"background-color:rgba(0,0,0,0)\">Hi</div>");
+    let Block::Para { background, .. } = &d.blocks[0] else { panic!() };
+    assert_eq!(*background, None);
+}

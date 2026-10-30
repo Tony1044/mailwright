@@ -1,11 +1,15 @@
-# Mailwright 0.4.0 binaries
+# Mailwright 0.4.1 binaries
 
 | File | For |
 | --- | --- |
 | `mailwright.exe` | Windows 10 and 11 (64-bit). A single file: no installer, no extra DLLs. |
-| `mailwright_0.4.0-1_amd64.deb` | Ubuntu 24.04 or later (64-bit). Install with `sudo apt install ./mailwright_0.4.0-1_amd64.deb` (it replaces MailCraft if that's installed). |
+| `mailwright_0.4.1-1_amd64.deb` | Ubuntu 24.04 or later (64-bit). Install with `sudo apt install ./mailwright_0.4.1-1_amd64.deb` (it replaces MailCraft if that's installed). |
 
-## What's new in 0.4.0
+## What's new in 0.4.1
+
+- Fixed: some HTML emails (notably newsletters built for dark mode) showed blocks of text as solid black boxes that hid the words. A fully transparent background written as `rgba(0, 0, 0, 0)` or as `#rrggbbaa` with a zero alpha was being read as opaque black instead of as "no background". Transparent now means transparent, and `rgba(…)` values with spaces in them, as well as semi-transparent colours, are read correctly too.
+
+## In 0.4.0
 
 - IMAP, POP3, and SMTP: Mailwright now works with any mailbox, not only Microsoft 365. Choose **Set up an IMAP or POP account** on the first screen, type your address and password, and Mailwright fills in the servers for common providers (Gmail, Yahoo, iCloud, Outlook.com, Fastmail, GMX, AOL) or guesses them from your domain.
   - IMAP keeps mail on the server and in step across devices; POP3 downloads it. Sending is over SMTP, with a copy filed in your Sent folder (IMAP).

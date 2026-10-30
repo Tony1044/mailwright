@@ -131,13 +131,24 @@ pub fn parse_color(s: &str) -> Option<[u8; 3]> {
         let h = |i: usize, n: usize| u8::from_str_radix(hex.get(i..i + n)?, 16).ok();
         return match hex.len() {
             3 => Some([h(0, 1)? * 17, h(1, 1)? * 17, h(2, 1)? * 17]),
+            // #rgba / #rrggbbaa: a zero alpha means fully transparent, i.e. no colour.
+            4 if h(3, 1)? == 0 => None,
+            4 => Some([h(0, 1)? * 17, h(1, 1)? * 17, h(2, 1)? * 17]),
+            8 if h(6, 2)? == 0 => None,
             6 | 8 => Some([h(0, 2)?, h(2, 2)?, h(4, 2)?]),
             _ => None,
         };
     }
     if let Some(inner) = s.strip_prefix("rgb(").or_else(|| s.strip_prefix("rgba(")) {
-        let parts: Vec<u8> = inner.trim_end_matches(')').split(',').take(3).filter_map(|p| p.trim().parse::<f32>().ok()).map(|v| v.clamp(0.0, 255.0) as u8).collect();
-        return (parts.len() == 3).then(|| [parts[0], parts[1], parts[2]]);
+        let nums: Vec<f32> = inner.trim_end_matches(')').split(',').filter_map(|p| p.trim().parse::<f32>().ok()).collect();
+        if nums.len() < 3 {
+            return None;
+        }
+        // A zero (or negative) alpha is fully transparent: treat it as no colour, not as solid black.
+        if nums.get(3).is_some_and(|a| *a <= 0.0) {
+            return None;
+        }
+        return Some([nums[0].clamp(0.0, 255.0) as u8, nums[1].clamp(0.0, 255.0) as u8, nums[2].clamp(0.0, 255.0) as u8]);
     }
     Some(match s.as_str() {
         "black" => [0, 0, 0],
@@ -226,7 +237,9 @@ fn parse_style(s: &str) -> Css {
             "max-height" | "height" if lv.trim_end_matches("!important").trim() == "0" || lv.starts_with("0px") => c.hidden = true,
             "mso-hide" if lv.starts_with("all") => c.hidden = true,
             "color" => c.color = parse_color(v),
-            "background-color" | "background" => c.background = v.split_whitespace().find_map(parse_color),
+            // Try the whole value first so `rgba(0, 0, 0, 0)` (spaces and all) is seen as one colour;
+            // fall back to a token scan for the `background` shorthand (e.g. `#fff url(...) no-repeat`).
+            "background-color" | "background" => c.background = parse_color(v).or_else(|| v.split_whitespace().find_map(parse_color)),
             "font-weight" => c.bold = Some(lv.starts_with("bold") || lv.parse::<u32>().is_ok_and(|w| w >= 600)),
             "font-style" => c.italic = Some(lv.starts_with("italic") || lv.starts_with("oblique")),
             "text-decoration" | "text-decoration-line" => {
